@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.auth.AuthStore;
+import org.ajeet.leave.LeaveStore;
 import org.ajeet.sync.SyncRequests;
 
 import java.io.IOException;
@@ -16,8 +17,10 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 
@@ -31,11 +34,13 @@ public class ApiServer {
     private final AttendanceStore attendance;
     private final AuthStore auth;
     private final SyncRequests sync;
+    private final LeaveStore leave;
 
-    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync) {
+    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave) {
         this.attendance = attendance;
         this.auth = auth;
         this.sync = sync;
+        this.leave = leave;
     }
 
     /** How long POST /api/sync waits for the agent before answering 202. */
@@ -133,12 +138,57 @@ public class ApiServer {
                 long id = Long.parseLong(path.split("/")[2]);
                 auth.resetPassword(id, readJson(ex).path("password").asText(""));
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
+            // ---- leave: employees apply, reporting managers / directors decide
+            } else if (method.equals("GET") && path.equals("/leave/my")) {
+                AuthStore.Account acct = requireAccount(ex);
+                int year = leave.currentYear();
+                ObjectNode out = mapper.createObjectNode();
+                out.put("year", year);
+                out.set("balance", mapper.valueToTree(leave.balance(acct.id(), year)));
+                out.set("requests", mapper.valueToTree(leave.forAccount(acct.id())));
+                send(ex, 200, out);
+            } else if (method.equals("POST") && path.equals("/leave")) {
+                AuthStore.Account acct = requireAccount(ex);
+                JsonNode b = readJson(ex);
+                long id = leave.apply(acct, new LeaveStore.LeaveInput(
+                        b.path("category").asText(""), b.path("from").asText(""), b.path("to").asText(""),
+                        b.path("halfDay").asText(""), b.path("reason").asText("")));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+            } else if (method.equals("POST") && path.matches("/leave/\\d+/(approve|reject|cancel)")) {
+                AuthStore.Account acct = requireAccount(ex);
+                String[] parts = path.split("/");
+                long id = Long.parseLong(parts[2]);
+                String note = readJson(ex).path("note").asText("");
+                if (parts[3].equals("cancel")) leave.cancel(acct, id);
+                else leave.decide(acct, id, parts[3].equals("approve"), note);
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
+            } else if (method.equals("GET") && path.equals("/leave/team")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("requests", mapper.valueToTree(leave.forTeam(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/leave/all")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                send(ex, 200, mapper.createObjectNode().set("requests", mapper.valueToTree(leave.all())));
+            } else if (method.equals("GET") && path.equals("/leave/quotas")) {
+                requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));
+            } else if (method.equals("PUT") && path.equals("/leave/quotas")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                JsonNode b = readJson(ex);
+                Map<String, Double> q = new LinkedHashMap<>();
+                for (String c : LeaveStore.CATEGORIES) {
+                    if (b.has(c)) {
+                        if (!b.get(c).isNumber()) throw new IllegalArgumentException(c + " quota must be a number");
+                        q.put(c, b.get(c).asDouble());
+                    }
+                }
+                leave.setQuotas(q);
+                send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));
             } else {
                 send(ex, 404, mapper.createObjectNode().put("error", "not found"));
             }
         } catch (AuthStore.AuthException e) {
             send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
-        } catch (ForbiddenException e) {
+        } catch (ForbiddenException | LeaveStore.ForbiddenException e) {
             send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             send(ex, 400, mapper.createObjectNode().put("error", e.getMessage()));

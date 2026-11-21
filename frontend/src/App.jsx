@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Avatar, DroneMark, Icon, dayOf, fmtDuration, greeting, groupByDay, hhmm,
-  minutesBetween, roster, todayStr,
+  Avatar, DroneMark, Empty, Icon, Modal, Stat, Toasts, call, dayOf, fmtDuration, greeting, groupByDay, hhmm,
+  minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
+import { EmployeeLeave, OpsLeave } from './leave.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -21,15 +22,6 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* private mode */ } },
 };
 
-async function call(method, url, body, token) {
-  const headers = {};
-  if (body) headers['Content-Type'] = 'application/json';
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `${method} ${url} failed (${res.status})`);
-  return data;
-}
 
 /* ---------------------------------------------------------------- shared */
 
@@ -47,25 +39,7 @@ function Clock() {
   );
 }
 
-function Toasts({ notice, error, onClose }) {
-  if (!notice && !error) return null;
-  return (
-    <div className="toasts">
-      {notice && <div className="toast ok"><Icon name="bolt" />{notice}</div>}
-      {error && <div className="toast err" onClick={onClose}>⚠ {error}<span className="toast-x">×</span></div>}
-    </div>
-  );
-}
 
-function Empty({ title, hint }) {
-  return (
-    <div className="empty">
-      <div className="empty-radar"><span /></div>
-      <b>{title}</b>
-      {hint && <p>{hint}</p>}
-    </div>
-  );
-}
 
 function RoleSwitch({ roles, role, onSwitch }) {
   if (roles.length < 2) return null;
@@ -111,6 +85,7 @@ function Shell({ me, ctx, nav, tab, setTab, title, subtitle, actions, children }
               <span>{ROLE_META[ctx.role].label}{me.enrollNumber ? ` · #${me.enrollNumber}` : ''}</span>
             </div>
           </div>
+          <ThemeToggle />
           <button className="icon-btn neutral" title="Change password" onClick={ctx.openPassword}><Icon name="key" /></button>
           <button className="icon-btn" title="Sign out" onClick={ctx.logout}><Icon name="logout" /></button>
         </div>
@@ -133,15 +108,6 @@ function Shell({ me, ctx, nav, tab, setTab, title, subtitle, actions, children }
   );
 }
 
-function Stat({ label, value, unit, accent, icon, foot }) {
-  return (
-    <div className={`stat ${accent || ''}`}>
-      <div className="stat-top"><span>{label}</span><Icon name={icon} /></div>
-      <div className="stat-value">{value}{unit && <small>{unit}</small>}</div>
-      {foot && <div className="stat-foot">{foot}</div>}
-    </div>
-  );
-}
 
 const ago = (s) => s == null ? 'never' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
 
@@ -208,6 +174,7 @@ function AuthScreen({ onLogin }) {
       </section>
 
       <section className="auth-panel">
+        <ThemeToggle className="theme-corner" />
         <form className="auth-card" onSubmit={submit}>
           <div className="auth-mobile-brand"><DroneMark size={40} /><b>VYOM DRONES</b></div>
           <span className="eyebrow">Pre-flight check</span>
@@ -330,12 +297,18 @@ function EmployeeView({ me, ctx }) {
 
   return (
     <Shell me={me} ctx={ctx} tab={tab} setTab={setTab}
-           nav={[{ key: 'home', label: 'My dashboard', icon: 'radar' }, { key: 'log', label: 'Flight log', icon: 'log' }]}
-           subtitle={tab === 'home' ? greeting() : 'Personal history'}
-           title={tab === 'home' ? name : 'My flight log'}>
+           nav={[
+             { key: 'home', label: 'My dashboard', icon: 'radar' },
+             { key: 'log', label: 'Flight log', icon: 'log' },
+             { key: 'leave', label: 'Leave', icon: 'calendar' },
+           ]}
+           subtitle={tab === 'home' ? greeting() : tab === 'leave' ? 'Leave tracking' : 'Personal history'}
+           title={tab === 'home' ? name : tab === 'leave' ? 'My leave' : 'My flight log'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
-      {!linked && (
+      {tab === 'leave' && <EmployeeLeave me={me} />}
+
+      {!linked && tab !== 'leave' && (
         <section className="panel">
           <Empty title="Not linked to a device user yet"
                  hint="A director needs to link your account to your profile on the attendance terminal before your punches show up here." />
@@ -423,24 +396,6 @@ function EmployeeView({ me, ctx }) {
 
 /* --------------------------------------------------------------- people */
 
-function Modal({ title, eyebrow, onClose, children }) {
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-head">
-          <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
-          <button className="icon-btn neutral" title="Close" onClick={onClose}>×</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function RoleChips({ roles }) {
   return (
@@ -692,6 +647,14 @@ function OpsView({ me, ctx, scope }) {
   const [day, setDay] = useState('');
   const [pq, setPq] = useState('');
   const [editing, setEditing] = useState(null); // null | 'new' | person
+  const [leaves, setLeaves] = useState([]);
+
+  const loadLeave = useCallback(async () => {
+    try {
+      const d = await call('GET', isDirector ? '/api/leave/all' : '/api/leave/team', null, me.token);
+      setLeaves(d.requests || []);
+    } catch (e) { setError(e.message); }
+  }, [me.token, isDirector]);
 
   const load = useCallback(async () => {
     try {
@@ -719,11 +682,11 @@ function OpsView({ me, ctx, scope }) {
   }, [me.token, isDirector]);
 
   useEffect(() => {
-    load(); loadAgent();
+    load(); loadAgent(); loadLeave();
     // the agent auto-syncs in the background; keep the dashboard fresh
-    const t = setInterval(() => { load(); loadAgent(); }, 20000);
+    const t = setInterval(() => { load(); loadAgent(); loadLeave(); }, 20000);
     return () => clearInterval(t);
-  }, [load, loadAgent]);
+  }, [load, loadAgent, loadLeave]);
 
   const flash = (msg) => { setNotice(msg); setTimeout(() => setNotice(null), 5000); };
 
@@ -755,7 +718,9 @@ function OpsView({ me, ctx, scope }) {
     today: [isDirector ? 'Command center' : 'Team today', isDirector ? 'Live operations' : 'Your reportees'],
     all: [isDirector ? 'Flight log' : 'Team log', isDirector ? 'All punches' : 'Team punches'],
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
+    leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
   };
+  const pendingLeave = leaves.filter((r) => r.status === 'pending' && r.accountId !== me.id).length;
 
   return (
     <Shell me={me} ctx={ctx} tab={tab} setTab={setTab}
@@ -764,6 +729,7 @@ function OpsView({ me, ctx, scope }) {
              { key: 'today', label: isDirector ? 'Command center' : 'Team today', icon: 'radar' },
              { key: 'all', label: isDirector ? 'Flight log' : 'Team log', icon: 'log' },
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
+             { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
            ]}
            actions={isDirector ? <>
              <AgentChip agent={agent} />
@@ -874,6 +840,8 @@ function OpsView({ me, ctx, scope }) {
           )}
         </section>
       )}
+
+      {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} reload={loadLeave} />}
 
       {editing && (
         <PersonForm me={me} isDirector={isDirector} person={editing === 'new' ? null : editing}

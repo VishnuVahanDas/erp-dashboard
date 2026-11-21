@@ -1,5 +1,7 @@
 /* Shared visual pieces: brand mark, icons, small data helpers. */
 
+import { useEffect, useState } from 'react';
+
 export function DroneMark({ size = 36, spin = true }) {
   const rotor = (cx, cy) => (
     <g transform={`translate(${cx} ${cy})`}>
@@ -35,6 +37,10 @@ const paths = {
   plus: <><path d="M12 5v14M5 12h14" /></>,
   edit: <><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13 7l4 4" /></>,
   star: <><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></>,
+  calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /><path d="M8 14h2M14 14h2M8 17.5h2" /></>,
+  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
+  moon: <><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" /></>,
+  monitor: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
   team: <><circle cx="12" cy="7" r="3" /><circle cx="5" cy="10" r="2.2" /><circle cx="19" cy="10" r="2.2" /><path d="M7 20c0-2.8 2.2-5 5-5s5 2.2 5 5M1.5 19c0-2 1.6-3.5 3.5-3.5M22.5 19c0-2-1.6-3.5-3.5-3.5" /></>,
 };
 
@@ -54,6 +60,110 @@ export function Avatar({ label }) {
   let h = 0;
   for (const c of text) h = (h * 31 + c.charCodeAt(0)) % 360;
   return <span className="avatar" style={{ '--hue': h }}>{ini}</span>;
+}
+
+/* ---------------------------------------------------------------- theme */
+
+const THEME_KEY = 'vyom_theme';            // 'system' | 'light' | 'dark'
+const THEME_NEXT = { system: 'light', light: 'dark', dark: 'system' };
+const THEME_META = {
+  system: { icon: 'monitor', label: 'System theme' },
+  light: { icon: 'sun', label: 'Light theme' },
+  dark: { icon: 'moon', label: 'Dark theme' },
+};
+
+function readTheme() {
+  try { const t = localStorage.getItem(THEME_KEY); return THEME_META[t] ? t : 'system'; } catch { return 'system'; }
+}
+
+/** Resolves the preference to light/dark and stamps it on <html data-theme>. */
+function applyTheme(pref) {
+  const dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#060b18' : '#dde4ef');
+}
+
+/** Cycles System → Light → Dark; remembered per browser. */
+export function ThemeToggle({ className = '' }) {
+  const [pref, setPref] = useState(readTheme);
+  useEffect(() => {
+    applyTheme(pref);
+    try { localStorage.setItem(THEME_KEY, pref); } catch { /* storage unavailable */ }
+    if (pref !== 'system') return undefined;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => applyTheme('system');
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [pref]);
+  const { icon, label } = THEME_META[pref];
+  const next = THEME_META[THEME_NEXT[pref]].label.toLowerCase();
+  return (
+    <button type="button" className={`icon-btn neutral ${className}`} title={`${label} — switch to ${next}`}
+            aria-label={`${label}. Switch to ${next}`} onClick={() => setPref(THEME_NEXT[pref])}>
+      <Icon name={icon} />
+    </button>
+  );
+}
+
+/* ------------------------------------------------------- shared widgets */
+
+export async function call(method, url, body, token) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `${method} ${url} failed (${res.status})`);
+  return data;
+}
+
+export function Toasts({ notice, error, onClose }) {
+  if (!notice && !error) return null;
+  return (
+    <div className="toasts">
+      {notice && <div className="toast ok"><Icon name="bolt" />{notice}</div>}
+      {error && <div className="toast err" onClick={onClose}>⚠ {error}<span className="toast-x">×</span></div>}
+    </div>
+  );
+}
+
+export function Empty({ title, hint }) {
+  return (
+    <div className="empty">
+      <div className="empty-radar"><span /></div>
+      <b>{title}</b>
+      {hint && <p>{hint}</p>}
+    </div>
+  );
+}
+
+export function Stat({ label, value, unit, accent, icon, foot }) {
+  return (
+    <div className={`stat ${accent || ''}`}>
+      <div className="stat-top"><span>{label}</span><Icon name={icon} /></div>
+      <div className="stat-value">{value}{unit && <small>{unit}</small>}</div>
+      {foot && <div className="stat-foot">{foot}</div>}
+    </div>
+  );
+}
+
+export function Modal({ title, eyebrow, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
+          <button className="icon-btn neutral" title="Close" onClick={onClose}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 /* -------------------------------------------------------------- helpers */

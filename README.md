@@ -19,6 +19,7 @@ web-dashboard/
 │       ├── auth/AuthStore.java             accounts, roles, sessions
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
+│       ├── leave/LeaveStore.java           leave requests, approvals, yearly quotas (LTS)
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 18 + Vite (Node 22, see .nvmrc)
 ```
@@ -98,6 +99,17 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/people/{id}/password` | director | `{password}`; signs them out |
 | POST | `/api/sync` | director | `{since?}` → queues a sync for the agent, waits up to 25 s (`202` if still running) |
 | GET  | `/api/sync/status` | director | agent `online`, host, last sync, last error |
+| GET  | `/api/leave/my` | signed in | own requests + this year's `balance` per category |
+| POST | `/api/leave` | signed in | `{category: personal\|sick, from, to, halfDay?: first\|second, reason}` |
+| POST | `/api/leave/{id}/approve`, `/reject` | reporting manager, director | `{note?}`; not your own request; first decision wins |
+| POST | `/api/leave/{id}/cancel` | owner, reporting manager, director | owner: pending, or approved and not started |
+| GET  | `/api/leave/team` | manager | reportees' requests |
+| GET  | `/api/leave/all` | director | everyone's requests |
+| GET / PUT | `/api/leave/quotas` | signed in / director | `{personal, sick}` days per calendar year |
+
+**Leave (LTS):** Sundays inside a range don't count; a half-day is 0.5. A
+request must fit in the yearly quota counting approved + pending days, and
+can't cross into a new year. Quotas default to 12 personal / 6 sick.
 
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
@@ -114,3 +126,4 @@ can start first. If you change one, change the other repo too.
 | `sync_requests` — "Sync device" queue | dashboard (request), agent (claim/finish) | both |
 | `sync_agent` — single heartbeat row | agent | dashboard |
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
+| `leave_requests`, `leave_quotas` | dashboard | dashboard |
