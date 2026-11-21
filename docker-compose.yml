@@ -1,0 +1,56 @@
+# Vyom web dashboard: PostgreSQL + Java API + nginx-served React UI.
+# Used for local development and on the VPS. Settings come from .env in this
+# folder (see .env.example).
+#
+#   docker compose up -d --build      # whole stack -> http://localhost:8088
+#   docker compose up -d db           # only the database, for native dev
+#                                     # (backend: ./mvnw exec:java, UI: npm run dev)
+#
+# The Windows sync agent (sdk repo) writes punches into this database, so on
+# the VPS it must be reachable from the office: see README "Production (VPS)".
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vyom_erp}
+      POSTGRES_USER: ${POSTGRES_USER:-vyom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vyom_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Loopback by default. On the VPS set DB_BIND=0.0.0.0 (and firewall the
+    # port to the office IP) so the Windows sync agent can connect.
+    ports:
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-vyom_erp}
+      PG_USER: ${POSTGRES_USER:-vyom}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:-vyom_dev}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      PORT: "8080"
+    # No published port: only the web container talks to it.
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8088}:80"
+
+volumes:
+  pgdata:
