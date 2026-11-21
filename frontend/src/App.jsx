@@ -690,10 +690,12 @@ function OpsView({ me, ctx, scope }) {
 
   const flash = (msg) => { setNotice(msg); setTimeout(() => setNotice(null), 5000); };
 
-  const sync = async () => {
+  // full=true re-pulls every punch still on the device (inserts are idempotent)
+  const sync = async (full = false) => {
+    if (full && !window.confirm('Re-sync every punch still stored on the device? Existing punches are kept; duplicates are skipped.')) return;
     setBusy(true); setError(null);
     try {
-      const r = await call('POST', '/api/sync', {}, me.token);
+      const r = await call('POST', '/api/sync', full ? { since: '2000-01-01T00:00:00' } : {}, me.token);
       flash(r.queued ? r.message
         : `Synced ${r.appended} new punch(es)${r.via?.startsWith('agent:') ? ` via ${r.via.slice(6)}` : ''}`);
       await load();
@@ -733,7 +735,11 @@ function OpsView({ me, ctx, scope }) {
            ]}
            actions={isDirector ? <>
              <AgentChip agent={agent} />
-             <button className="btn primary" onClick={sync} disabled={busy || (agent && !agent.online)}>
+             <button className="btn ghost" onClick={() => sync(true)} disabled={busy || (agent && !agent.online)}
+                     title="Re-pull every punch still stored on the device">
+               Sync all history
+             </button>
+             <button className="btn primary" onClick={() => sync()} disabled={busy || (agent && !agent.online)}>
                <Icon name="sync" />{busy ? 'Syncing…' : 'Sync device'}
              </button>
            </> : (
