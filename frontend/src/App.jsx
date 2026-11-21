@@ -657,14 +657,16 @@ function OpsView({ me, ctx, scope }) {
   }, [me.token, isDirector]);
 
   const load = useCallback(async () => {
+    // a picked day is fetched server-side; the unfiltered log is capped at 500 rows
+    const dateQ = day ? `?date=${encodeURIComponent(day)}` : '';
     try {
       const [t, a, p] = await Promise.all(isDirector ? [
         call('GET', '/api/attendance/today', null, me.token),
-        call('GET', '/api/attendance/all', null, me.token),
+        call('GET', `/api/attendance/all${dateQ}`, null, me.token),
         call('GET', '/api/people', null, me.token),
       ] : [
         call('GET', '/api/attendance/team?range=today', null, me.token),
-        call('GET', '/api/attendance/team', null, me.token),
+        call('GET', `/api/attendance/team${dateQ}`, null, me.token),
         call('GET', '/api/team', null, me.token),
       ]);
       setToday(t.punches || []);
@@ -672,7 +674,7 @@ function OpsView({ me, ctx, scope }) {
       setPeople(isDirector ? p.people || [] : p.members || []);
       setError(null);
     } catch (e) { setError(e.message); }
-  }, [me.token, isDirector]);
+  }, [me.token, isDirector, day]);
 
   const [agent, setAgent] = useState(null);
   const loadAgent = useCallback(async () => {

@@ -1,5 +1,6 @@
 package org.ajeet.attendance;
 
+import java.time.LocalDate;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -61,14 +62,18 @@ public class AttendanceStore {
         return punchRows("WHERE p.punch_time::date = current_date", null);
     }
 
-    /** All punches, newest first - the director full log (capped). */
-    public synchronized List<AttendancePunch> punchesAll() throws IOException {
-        return punchRows("", null);
+    /**
+     * All punches, newest first - the director full log. With {@code date},
+     * only that day (so any past day is reachable despite the 500-row cap).
+     */
+    public synchronized List<AttendancePunch> punchesAll(LocalDate date) throws IOException {
+        return date == null ? punchRows("", null) : punchRows("WHERE p.punch_time::date = ?", date);
     }
 
     /** Punches for a set of device users (a manager's team), newest first. */
     public synchronized List<AttendancePunch> punchesForTeam(Collection<Integer> enrolls,
-                                                             boolean todayOnly) throws IOException {
+                                                             boolean todayOnly,
+                                                             LocalDate date) throws IOException {
         if (enrolls.isEmpty()) return List.of();
         List<AttendancePunch> out = new ArrayList<>();
         String sql = """
@@ -76,10 +81,12 @@ public class AttendanceStore {
                        to_char(p.punch_time, 'YYYY-MM-DD HH24:MI:SS'), p.verify_label
                 FROM punches p LEFT JOIN users u ON u.enroll_number = p.enroll_number
                 WHERE p.enroll_number = ANY(?)""" +
-                (todayOnly ? " AND p.punch_time::date = current_date" : "") +
+                (todayOnly ? " AND p.punch_time::date = current_date"
+                        : date != null ? " AND p.punch_time::date = ?" : "") +
                 " ORDER BY p.punch_time DESC LIMIT 500";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setArray(1, conn.createArrayOf("integer", enrolls.toArray()));
+            if (!todayOnly && date != null) ps.setObject(2, date);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),
@@ -107,7 +114,7 @@ public class AttendanceStore {
         return out;
     }
 
-    private List<AttendancePunch> punchRows(String where, Integer enroll) throws IOException {
+    private List<AttendancePunch> punchRows(String where, Object param) throws IOException {
         List<AttendancePunch> out = new ArrayList<>();
         String sql = """
                 SELECT p.enroll_number, COALESCE(u.name,''),
@@ -115,7 +122,7 @@ public class AttendanceStore {
                 FROM punches p LEFT JOIN users u ON u.enroll_number = p.enroll_number
                 """ + where + " ORDER BY p.punch_time DESC LIMIT 500";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (enroll != null) ps.setInt(1, enroll);
+            if (param != null) ps.setObject(1, param);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),

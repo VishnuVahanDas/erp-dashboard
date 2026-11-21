@@ -103,13 +103,14 @@ public class ApiServer {
             } else if (method.equals("GET") && path.equals("/attendance/team")) {
                 AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
                 boolean today = "today".equals(query(ex, "range"));
-                send(ex, 200, punchesJson(attendance.punchesForTeam(auth.teamEnrolls(acct.id()), today)));
+                send(ex, 200, punchesJson(attendance.punchesForTeam(
+                        auth.teamEnrolls(acct.id()), today, queryDate(ex))));
             } else if (method.equals("GET") && path.equals("/attendance/today")) {
                 requireRole(ex, AuthStore.DIRECTOR);
                 send(ex, 200, punchesJson(attendance.punchesToday()));
             } else if (method.equals("GET") && path.equals("/attendance/all")) {
                 requireRole(ex, AuthStore.DIRECTOR);
-                send(ex, 200, punchesJson(attendance.punchesAll()));
+                send(ex, 200, punchesJson(attendance.punchesAll(queryDate(ex))));
 
             // ---- people: directors manage everyone, managers add employees
             } else if (method.equals("GET") && path.equals("/team")) {
@@ -250,6 +251,17 @@ public class ApiServer {
         AuthStore.Account acct = requireAccount(ex);
         for (String r : roles) if (acct.has(r)) return acct;
         throw new ForbiddenException(String.join(" or ", roles) + " role required");
+    }
+
+    /** Optional {@code ?date=YYYY-MM-DD}; a malformed value answers 400. */
+    private java.time.LocalDate queryDate(HttpExchange ex) {
+        String d = query(ex, "date");
+        if (d == null || d.isBlank()) return null;
+        try {
+            return java.time.LocalDate.parse(d);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new IllegalArgumentException("date must be YYYY-MM-DD");
+        }
     }
 
     private String query(HttpExchange ex, String key) {
