@@ -9,6 +9,10 @@
 # The Windows sync agent (sdk repo) writes punches into this database, so on
 # the VPS it must be reachable from the office: see README "Production (VPS)".
 
+# Fixed project name: containers and the pgdata volume keep the same names
+# whatever this folder is called (web-dashboard here, erp-dashboard on the VPS).
+name: vyom-erp
+
 services:
   db:
     image: postgres:17-alpine
