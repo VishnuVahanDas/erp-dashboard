@@ -127,3 +127,18 @@ can start first. If you change one, change the other repo too.
 | `sync_agent` — single heartbeat row | agent | dashboard |
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
 | `leave_requests`, `leave_quotas` | dashboard | dashboard |
+
+## Local dev with production data
+
+`db/vyom_erp.sql` is a snapshot of the production database (login sessions excluded).
+To load it into your local docker Postgres (this replaces the local tables):
+
+```bash
+./db/restore.sh
+```
+
+To refresh the snapshot on the VPS:
+
+```bash
+docker exec vyom-erp-db-1 sh -c 'pg_dump -U $POSTGRES_USER -d $POSTGRES_DB --no-owner --no-privileges --clean --if-exists --exclude-table-data=sessions' > db/vyom_erp.sql
+```
