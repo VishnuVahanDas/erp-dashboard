@@ -4,6 +4,7 @@ import {
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
 import { EmployeeLeave, OpsLeave } from './leave.jsx';
+import { EmployeeMbo, OpsMbo } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -270,11 +271,18 @@ function EmployeeView({ me, ctx }) {
     } catch (e) { setError(e.message); }
   }, [me.token, linked]);
 
+  const [mbos, setMbos] = useState([]);
+  const loadMbo = useCallback(async () => {
+    try { setMbos((await call('GET', '/api/mbo/my', null, me.token)).threads || []); }
+    catch (e) { setError(e.message); }
+  }, [me.token]);
+
   useEffect(() => {
-    load();
-    const t = setInterval(load, 30000); // live-ish updates
+    load(); loadMbo();
+    const t = setInterval(() => { load(); loadMbo(); }, 30000); // live-ish updates
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, loadMbo]);
+  const mboWaiting = mbos.filter((t) => t.status === 'open' && t.waitingOn === 'employee').length;
 
   const days = useMemo(() => groupByDay(punches), [punches]);
   const today = days[todayStr()] || [];
@@ -301,14 +309,16 @@ function EmployeeView({ me, ctx }) {
              { key: 'home', label: 'My dashboard', icon: 'radar' },
              { key: 'log', label: 'Flight log', icon: 'log' },
              { key: 'leave', label: 'Leave', icon: 'calendar' },
+             { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
            ]}
-           subtitle={tab === 'home' ? greeting() : tab === 'leave' ? 'Leave tracking' : 'Personal history'}
-           title={tab === 'home' ? name : tab === 'leave' ? 'My leave' : 'My flight log'}>
+           subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Objectives & discussions' }[tab] || 'Personal history'}
+           title={{ home: name, leave: 'My leave', mbo: 'My MBOs' }[tab] || 'My flight log'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
       {tab === 'leave' && <EmployeeLeave me={me} />}
+      {tab === 'mbo' && <EmployeeMbo me={me} threads={mbos} reload={loadMbo} />}
 
-      {!linked && tab !== 'leave' && (
+      {!linked && (tab === 'home' || tab === 'log') && (
         <section className="panel">
           <Empty title="Not linked to a device user yet"
                  hint="A director needs to link your account to your profile on the attendance terminal before your punches show up here." />
@@ -648,6 +658,14 @@ function OpsView({ me, ctx, scope }) {
   const [pq, setPq] = useState('');
   const [editing, setEditing] = useState(null); // null | 'new' | person
   const [leaves, setLeaves] = useState([]);
+  const [mbos, setMbos] = useState([]);
+
+  const loadMbo = useCallback(async () => {
+    try {
+      const d = await call('GET', isDirector ? '/api/mbo/all' : '/api/mbo/team', null, me.token);
+      setMbos(d.threads || []);
+    } catch (e) { setError(e.message); }
+  }, [me.token, isDirector]);
 
   const loadLeave = useCallback(async () => {
     try {
@@ -684,11 +702,11 @@ function OpsView({ me, ctx, scope }) {
   }, [me.token, isDirector]);
 
   useEffect(() => {
-    load(); loadAgent(); loadLeave();
+    load(); loadAgent(); loadLeave(); loadMbo();
     // the agent auto-syncs in the background; keep the dashboard fresh
-    const t = setInterval(() => { load(); loadAgent(); loadLeave(); }, 20000);
+    const t = setInterval(() => { load(); loadAgent(); loadLeave(); loadMbo(); }, 20000);
     return () => clearInterval(t);
-  }, [load, loadAgent, loadLeave]);
+  }, [load, loadAgent, loadLeave, loadMbo]);
 
   const flash = (msg) => { setNotice(msg); setTimeout(() => setNotice(null), 5000); };
 
@@ -723,7 +741,9 @@ function OpsView({ me, ctx, scope }) {
     all: [isDirector ? 'Flight log' : 'Team log', isDirector ? 'All punches' : 'Team punches'],
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
+    mbo: ['MBOs', isDirector ? 'Everyone · objectives & discussions' : 'Your team · objectives & discussions'],
   };
+  const mboWaiting = mbos.filter((t) => t.status === 'open' && t.waitingOn === 'manager').length;
   const pendingLeave = leaves.filter((r) => r.status === 'pending' && r.accountId !== me.id).length;
 
   return (
@@ -734,6 +754,7 @@ function OpsView({ me, ctx, scope }) {
              { key: 'all', label: isDirector ? 'Flight log' : 'Team log', icon: 'log' },
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
              { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
+             { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
            ]}
            actions={isDirector ? <>
              <AgentChip agent={agent} />
@@ -850,6 +871,7 @@ function OpsView({ me, ctx, scope }) {
       )}
 
       {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} reload={loadLeave} />}
+      {tab === 'mbo' && <OpsMbo me={me} isDirector={isDirector} threads={mbos} people={people} reload={loadMbo} />}
 
       {editing && (
         <PersonForm me={me} isDirector={isDirector} person={editing === 'new' ? null : editing}

@@ -20,6 +20,7 @@ web-dashboard/
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
 │       ├── leave/LeaveStore.java           leave requests, approvals, yearly quotas (LTS)
+│       ├── mbo/MboStore.java               MBO discussions: propose / acknowledge / deny / suggest
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 18 + Vite (Node 22, see .nvmrc)
 ```
@@ -111,6 +112,20 @@ directors and old pending/rejected sign-ups become `disabled`.
 request must fit in the yearly quota counting approved + pending days, and
 can't cross into a new year. Quotas default to 12 personal / 6 sick.
 
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET  | `/api/mbo/my` | signed in | own MBO threads with every entry |
+| GET  | `/api/mbo/team` | manager | reportees' threads |
+| GET  | `/api/mbo/all` | director | everyone's threads except your own |
+| POST | `/api/mbo` | signed in | `{employeeId?, title, body}`; omit `employeeId` to raise one yourself |
+| POST | `/api/mbo/{id}/acknowledge`, `/deny`, `/suggest` | the side whose turn it is | `{body}`; required for deny/suggest |
+
+**MBOs:** a thread is one employee vs. their "manager side" (any reporting
+manager, or any director). Whoever starts it proposes; the other side then
+acknowledges (closed, agreed), denies (closed, not agreed) or suggests changes
+(turn flips back). Entries are never edited or deleted, so the trail can back
+promotion reviews.
+
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
 
@@ -127,6 +142,7 @@ can start first. If you change one, change the other repo too.
 | `sync_agent` — single heartbeat row | agent | dashboard |
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
 | `leave_requests`, `leave_quotas` | dashboard | dashboard |
+| `mbo_threads`, `mbo_entries` | dashboard | dashboard |
 
 ## Local dev with production data
 

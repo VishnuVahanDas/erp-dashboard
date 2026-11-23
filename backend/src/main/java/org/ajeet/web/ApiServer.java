@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
+import org.ajeet.mbo.MboStore;
 import org.ajeet.sync.SyncRequests;
 
 import java.io.IOException;
@@ -35,12 +36,14 @@ public class ApiServer {
     private final AuthStore auth;
     private final SyncRequests sync;
     private final LeaveStore leave;
+    private final MboStore mbo;
 
-    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave) {
+    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave, MboStore mbo) {
         this.attendance = attendance;
         this.auth = auth;
         this.sync = sync;
         this.leave = leave;
+        this.mbo = mbo;
     }
 
     /** How long POST /api/sync waits for the agent before answering 202. */
@@ -184,12 +187,33 @@ public class ApiServer {
                 }
                 leave.setQuotas(q);
                 send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));
+            // ---- MBOs: employee <-> manager side discussions; acknowledge / deny / suggest
+            } else if (method.equals("GET") && path.equals("/mbo/my")) {
+                AuthStore.Account acct = requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("threads", mapper.valueToTree(mbo.forAccount(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/mbo/team")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("threads", mapper.valueToTree(mbo.forTeam(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/mbo/all")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                send(ex, 200, mapper.createObjectNode().set("threads", mapper.valueToTree(mbo.allExcept(acct.id()))));
+            } else if (method.equals("POST") && path.equals("/mbo")) {
+                AuthStore.Account acct = requireAccount(ex);
+                JsonNode b = readJson(ex);
+                Long emp = b.hasNonNull("employeeId") ? b.get("employeeId").asLong() : null;
+                long id = mbo.start(acct, emp, b.path("title").asText(""), b.path("body").asText(""));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+            } else if (method.equals("POST") && path.matches("/mbo/\\d+/(acknowledge|deny|suggest)")) {
+                AuthStore.Account acct = requireAccount(ex);
+                String[] parts = path.split("/");
+                mbo.respond(acct, Long.parseLong(parts[2]), parts[3], readJson(ex).path("body").asText(""));
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
             } else {
                 send(ex, 404, mapper.createObjectNode().put("error", "not found"));
             }
         } catch (AuthStore.AuthException e) {
             send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
-        } catch (ForbiddenException | LeaveStore.ForbiddenException e) {
+        } catch (ForbiddenException | LeaveStore.ForbiddenException | MboStore.ForbiddenException e) {
             send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             send(ex, 400, mapper.createObjectNode().put("error", e.getMessage()));

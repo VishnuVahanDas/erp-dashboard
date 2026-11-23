@@ -4,6 +4,7 @@ import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.config.Env;
 import org.ajeet.leave.LeaveStore;
+import org.ajeet.mbo.MboStore;
 import org.ajeet.sync.SyncRequests;
 import org.ajeet.web.ApiServer;
 
@@ -33,6 +34,7 @@ public class Main {
         SyncRequests sync = new SyncRequests(pgUrl, pgUser, pgPass);
         // after AuthStore: leave_requests references accounts
         LeaveStore leave = new LeaveStore(pgUrl, pgUser, pgPass);
-        new ApiServer(attendance, auth, sync, leave).start(port);
+        MboStore mbo = new MboStore(pgUrl, pgUser, pgPass);
+        new ApiServer(attendance, auth, sync, leave, mbo).start(port);
     }
 }
