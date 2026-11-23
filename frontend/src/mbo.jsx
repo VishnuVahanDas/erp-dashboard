@@ -298,44 +298,162 @@ export function EmployeeMbo({ me, threads, reload }) {
 
 /* ------------------------------------------------------------ managers */
 
-/** Per-person tally — the promotion-review view. */
-function TrackRecord({ threads, onPick }) {
-  const rows = useMemo(() => {
-    const by = new Map();
-    for (const t of threads) {
-      const r = by.get(t.employeeId) || { id: t.employeeId, name: t.employeeName, email: t.employeeEmail,
-        total: 0, acknowledged: 0, denied: 0, open: 0, rounds: 0, last: 0 };
-      r.total++; r[t.status]++; r.rounds += rounds(t); r.last = Math.max(r.last, t.updatedAt);
-      by.set(t.employeeId, r);
-    }
-    return [...by.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-  }, [threads]);
+/* ---------------------------------------------------------- performance */
 
-  if (!rows.length) return <Empty title="No MBOs yet" hint="Each person's record builds up as discussions close." />;
+const DAY = 864e5;
+const PERIODS = {
+  '90d': { label: 'Last 3 months', since: () => Date.now() - 90 * DAY },
+  '12m': { label: 'Last 12 months', since: () => Date.now() - 365 * DAY },
+  year: { label: 'This year', since: () => new Date(new Date().getFullYear(), 0, 1).getTime() },
+  all: { label: 'All time', since: () => 0 },
+};
+const BADGES = {
+  agreed: { label: 'Most agreed', title: 'Most objectives agreed in this period' },
+  initiative: { label: 'Most initiative', title: 'Raised the most MBOs themselves' },
+  quick: { label: 'Quickest replies', title: 'Fastest average reply to their manager' },
+};
+/** A wait longer than this shows as overdue. */
+const OVERDUE = 7 * DAY;
+
+const fmtWait = (ms) => ms == null ? '—'
+  : ms < 3600e3 ? `${Math.max(1, Math.round(ms / 60e3))}m`
+  : ms < 2 * DAY ? `${Math.round(ms / 3600e3)}h`
+  : `${Math.round(ms / DAY)}d`;
+
+/**
+ * Per-person numbers from their MBO threads. avgReply is how long the
+ * employee took to answer a manager-side message, on average.
+ */
+function scorecard(threads) {
+  const by = new Map();
+  for (const t of threads) {
+    const r = by.get(t.employeeId) || {
+      id: t.employeeId, name: t.employeeName, email: t.employeeEmail, threads: [],
+      total: 0, acknowledged: 0, denied: 0, open: 0, initiated: 0, agreedRounds: 0,
+      replyMs: 0, replies: 0, waiting: 0, oldestWait: 0, last: 0, badges: [],
+    };
+    r.threads.push(t);
+    r.total++; r[t.status]++;
+    if (t.startedBy === 'employee') r.initiated++;
+    if (t.status === 'acknowledged') r.agreedRounds += rounds(t);
+    for (let i = 1; i < t.entries.length; i++) {
+      const [prev, cur] = [t.entries[i - 1], t.entries[i]];
+      if (prev.side === 'manager' && cur.side === 'employee') { r.replyMs += cur.createdAt - prev.createdAt; r.replies++; }
+    }
+    if (t.status === 'open' && t.waitingOn === 'employee') {
+      r.waiting++;
+      r.oldestWait = Math.max(r.oldestWait, Date.now() - t.entries[t.entries.length - 1].createdAt);
+    }
+    r.last = Math.max(r.last, t.updatedAt);
+    by.set(t.employeeId, r);
+  }
+  const rows = [...by.values()].map((r) => {
+    const closed = r.acknowledged + r.denied;
+    return {
+      ...r,
+      rate: closed ? r.acknowledged / closed : null,
+      avgReply: r.replies ? r.replyMs / r.replies : null,
+      avgRounds: r.acknowledged ? r.agreedRounds / r.acknowledged : null,
+    };
+  });
+  // badges go to the leader(s) on each measure; ties share it
+  const award = (key, value, better) => {
+    const vals = rows.map(value).filter((v) => v != null && v > 0);
+    if (!vals.length) return;
+    const best = better === 'low' ? Math.min(...vals) : Math.max(...vals);
+    rows.forEach((r) => { if (value(r) === best) r.badges.push(key); });
+  };
+  award('agreed', (r) => r.acknowledged);
+  award('initiative', (r) => r.initiated);
+  award('quick', (r) => (r.replies >= 2 ? r.avgReply : null), 'low');
+  return rows.sort((a, b) => b.acknowledged - a.acknowledged || (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
+}
+
+function Badges({ keys }) {
+  return keys.map((k) => <span key={k} className={`perf-badge ${k}`} title={BADGES[k].title}><Icon name="star" size={11} />{BADGES[k].label}</span>);
+}
+
+function RateBar({ rate }) {
+  if (rate == null) return <span className="dim">—</span>;
+  const pct = Math.round(rate * 100);
+  return <span className="perf-rate"><span className="track"><i style={{ width: `${pct}%` }} /></span><b>{pct}%</b></span>;
+}
+
+/** One person's performance card: tiles + their MBOs in the period. */
+function PersonDialog({ me, row: r, period, onOpenThread, onClose }) {
   return (
-    <div className="table-wrap">
-      <table className="leave-table">
-        <thead>
-          <tr><th>Person</th><th>MBOs</th><th>Acknowledged</th><th>Denied</th><th>Open</th><th>Avg rounds</th><th>Last activity</th></tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const closed = r.acknowledged + r.denied;
-            return (
-              <tr key={r.id} className="mbo-row" onClick={() => onPick(r.email)}>
-                <td><div className="who"><Avatar label={r.name} /><span>{r.name}<small>{r.email}</small></span></div></td>
-                <td className="mono strong">{r.total}</td>
-                <td className="mono">{r.acknowledged}{closed ? <small className="sub">{Math.round((r.acknowledged / closed) * 100)}% of closed</small> : null}</td>
-                <td className="mono">{r.denied}</td>
-                <td className="mono">{r.open}</td>
-                <td className="mono">{(r.rounds / r.total).toFixed(1)}</td>
-                <td className="mono dim">{fmtStamp(r.last)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <Modal title={r.name} eyebrow={`Performance · ${PERIODS[period].label}`} onClose={onClose}>
+      {r.badges.length > 0 && <div className="perf-badges"><Badges keys={r.badges} /></div>}
+      <div className="perf-tiles">
+        <div><span>Objectives agreed</span><b>{r.acknowledged}</b><small>of {r.total} MBO(s)</small></div>
+        <div><span>Agreement rate</span><b>{r.rate == null ? '—' : `${Math.round(r.rate * 100)}%`}</b><small>{r.denied} denied</small></div>
+        <div><span>Raised themselves</span><b>{r.initiated}</b><small>initiative</small></div>
+        <div><span>Avg reply time</span><b>{fmtWait(r.avgReply)}</b><small>{r.replies} repl{r.replies === 1 ? 'y' : 'ies'}</small></div>
+        <div><span>Rounds to agree</span><b>{r.avgRounds == null ? '—' : r.avgRounds.toFixed(1)}</b><small>lower = quicker alignment</small></div>
+        <div className={r.oldestWait > OVERDUE ? 'warn' : ''}><span>Waiting on them</span><b>{r.waiting}</b><small>{r.waiting ? `oldest ${fmtWait(r.oldestWait)}` : 'nothing pending'}</small></div>
+      </div>
+      <h4 className="perf-sub">MBOs in this period</h4>
+      <ul className="perf-list">
+        {r.threads.map((t) => (
+          <li key={t.id} onClick={() => onOpenThread(t.id)}>
+            <span><b>{t.title}</b><small>with {t.managerId === me.id ? 'you' : managerLabel(t)} · {rounds(t)} round(s) · {fmtStamp(t.updatedAt)}</small></span>
+            <StatusPill t={t} me={me} />
+          </li>
+        ))}
+      </ul>
+      <small className="dim">Figures cover MBOs active in the period. Badges go to whoever leads each measure among the people you can see.</small>
+    </Modal>
+  );
+}
+
+/** Per-person performance table — the view for awards and promotion reviews. */
+function Performance({ me, threads, onOpenThread }) {
+  const [period, setPeriod] = useState('12m');
+  const [picked, setPicked] = useState(null);
+  const rows = useMemo(() => {
+    const since = PERIODS[period].since();
+    return scorecard(threads.filter((t) => t.updatedAt >= since));
+  }, [threads, period]);
+  const row = rows.find((r) => r.id === picked);
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>Performance</h3>
+        <select className="date" value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: 'auto' }}>
+          {Object.entries(PERIODS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+        </select>
+      </div>
+      {!rows.length ? <Empty title="No MBOs in this period" hint="Each person's record builds up as discussions close." /> : (
+        <div className="table-wrap">
+          <table className="leave-table">
+            <thead>
+              <tr><th>Person</th><th>Agreed</th><th>Agreement rate</th><th>Raised themselves</th><th>Avg reply</th><th>Waiting on them</th><th>Last activity</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="mbo-row" onClick={() => setPicked(r.id)}>
+                  <td>
+                    <div className="who"><Avatar label={r.name} /><span>{r.name}<small>{r.email}</small></span></div>
+                    {r.badges.length > 0 && <div className="perf-badges"><Badges keys={r.badges} /></div>}
+                  </td>
+                  <td className="mono strong">{r.acknowledged}<small className="sub">of {r.total}</small></td>
+                  <td><RateBar rate={r.rate} /></td>
+                  <td className="mono">{r.initiated}</td>
+                  <td className="mono">{fmtWait(r.avgReply)}</td>
+                  <td className="mono">{r.waiting
+                    ? <span className={r.oldestWait > OVERDUE ? 'perf-overdue' : ''}>{r.waiting}<small className="sub">oldest {fmtWait(r.oldestWait)}</small></span>
+                    : <span className="dim">0</span>}</td>
+                  <td className="mono dim">{fmtStamp(r.last)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {row && <PersonDialog me={me} row={row} period={period} onClose={() => setPicked(null)}
+                            onOpenThread={(id) => { setPicked(null); onOpenThread(id); }} />}
+    </section>
   );
 }
 
@@ -391,13 +509,7 @@ export function OpsMbo({ me, isDirector, threads, people, reload }) {
       </section>
     )}
 
-    <section className="panel">
-      <div className="panel-head">
-        <h3>Track record</h3>
-        <span className="muted">per person · click to filter</span>
-      </div>
-      <TrackRecord threads={threads} onPick={(email) => { setQ(email); setStatus(''); }} />
-    </section>
+    <Performance me={me} threads={threads} onOpenThread={d.setOpenId} />
 
     <section className="panel">
       <div className="toolbar">
