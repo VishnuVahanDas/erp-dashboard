@@ -191,6 +191,9 @@ public class ApiServer {
             } else if (method.equals("GET") && path.equals("/mbo/my")) {
                 AuthStore.Account acct = requireAccount(ex);
                 send(ex, 200, mapper.createObjectNode().set("threads", mapper.valueToTree(mbo.forAccount(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/mbo/managers")) {
+                AuthStore.Account acct = requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("managers", mapper.valueToTree(mbo.counterparts(acct.id()))));
             } else if (method.equals("GET") && path.equals("/mbo/team")) {
                 AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
                 send(ex, 200, mapper.createObjectNode().set("threads", mapper.valueToTree(mbo.forTeam(acct.id()))));
@@ -201,7 +204,8 @@ public class ApiServer {
                 AuthStore.Account acct = requireAccount(ex);
                 JsonNode b = readJson(ex);
                 Long emp = b.hasNonNull("employeeId") ? b.get("employeeId").asLong() : null;
-                long id = mbo.start(acct, emp, b.path("title").asText(""), b.path("body").asText(""));
+                Long mgr = b.hasNonNull("managerId") ? b.get("managerId").asLong() : null;
+                long id = mbo.start(acct, emp, mgr, b.path("title").asText(""), b.path("body").asText(""));
                 send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
             } else if (method.equals("POST") && path.matches("/mbo/\\d+/(acknowledge|deny|suggest)")) {
                 AuthStore.Account acct = requireAccount(ex);

@@ -117,11 +117,14 @@ can't cross into a new year. Quotas default to 12 personal / 6 sick.
 | GET  | `/api/mbo/my` | signed in | own MBO threads with every entry |
 | GET  | `/api/mbo/team` | manager | reportees' threads |
 | GET  | `/api/mbo/all` | director | everyone's threads except your own |
-| POST | `/api/mbo` | signed in | `{employeeId?, title, body}`; omit `employeeId` to raise one yourself |
-| POST | `/api/mbo/{id}/acknowledge`, `/deny`, `/suggest` | the side whose turn it is | `{body}`; required for deny/suggest |
+| GET  | `/api/mbo/managers` | signed in | who you can send an MBO to: your reporting managers + directors |
+| POST | `/api/mbo` | signed in | manager: `{employeeId, title, body}`; employee: `{managerId, title, body}` |
+| POST | `/api/mbo/{id}/acknowledge`, `/deny`, `/suggest` | the side whose turn it is (employee, or the named manager / a director) | `{body}`; required for deny/suggest |
 
-**MBOs:** a thread is one employee vs. their "manager side" (any reporting
-manager, or any director). Whoever starts it proposes; the other side then
+**MBOs:** a thread is between one employee and one named manager. A manager
+starting it is that manager; an employee picks one of their reporting managers
+or a director. The manager side is answered by that manager or any director
+(other reporting managers can read it). Whoever starts it proposes; the other side then
 acknowledges (closed, agreed), denies (closed, not agreed) or suggests changes
 (turn flips back). Entries are never edited or deleted, so the trail can back
 promotion reviews.

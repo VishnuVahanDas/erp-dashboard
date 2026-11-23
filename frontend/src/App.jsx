@@ -4,7 +4,7 @@ import {
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
 import { EmployeeLeave, OpsLeave } from './leave.jsx';
-import { EmployeeMbo, OpsMbo } from './mbo.jsx';
+import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -743,7 +743,7 @@ function OpsView({ me, ctx, scope }) {
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
     mbo: ['MBOs', isDirector ? 'Everyone · objectives & discussions' : 'Your team · objectives & discussions'],
   };
-  const mboWaiting = mbos.filter((t) => t.status === 'open' && t.waitingOn === 'manager').length;
+  const mboWaiting = mbos.filter((t) => myTurn(t, me)).length;
   const pendingLeave = leaves.filter((r) => r.status === 'pending' && r.accountId !== me.id).length;
 
   return (

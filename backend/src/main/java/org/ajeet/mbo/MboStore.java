@@ -18,9 +18,13 @@ import java.util.Map;
  * MBOs: a recorded back-and-forth between an employee and their manager side
  * about an objective, so the history can back up promotion decisions.
  *
- * A thread is about one employee. The "manager side" is any of the employee's
- * reporting managers or any director. Either side may start a thread with a
- * proposal; after that the turn alternates. Whoever's turn it is can:
+ * A thread is between one employee and one named manager (manager_id). A
+ * manager or director starting a thread is that manager; an employee picks
+ * one of their reporting managers or any director. The manager side can be
+ * answered by that manager or by any director. (Threads from before
+ * manager_id existed have it null: any reporting manager or director answers.)
+ * Either side may start a thread with a proposal; after that the turn
+ * alternates. Whoever's turn it is can:
  *   - acknowledge: agree with the latest proposal -> thread is closed as acknowledged
  *   - deny:        refuse it (reason required)     -> thread is closed as denied
  *   - suggest:     counter with changes            -> turn passes to the other side
@@ -45,12 +49,15 @@ public class MboStore {
     public record Entry(long id, Long authorId, String authorName, String side, String kind,
                         String body, long createdAt) {}
 
+    /** Someone an employee can address an MBO to. relation: manager (reports to them) | director. */
+    public record Counterpart(long id, String name, String email, String relation) {}
+
     /**
      * A thread as the portal shows it. status: open | acknowledged | denied.
      * waitingOn is the side whose turn it is (null once closed). Times are epoch millis.
      */
     public record MboThread(long id, long employeeId, String employeeName, String employeeEmail,
-                         String title, String status, String waitingOn, String startedBy,
+                         Long managerId, String managerName, String title, String status, String waitingOn, String startedBy,
                          long createdAt, long updatedAt, List<Entry> entries) {}
 
     public MboStore(String url, String user, String password) throws IOException {
@@ -69,6 +76,8 @@ public class MboStore {
                             created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
                             updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
                         )""");
+                // the named manager on the other side (added after the first release)
+                st.execute("ALTER TABLE mbo_threads ADD COLUMN IF NOT EXISTS manager_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL");
                 st.execute("CREATE INDEX IF NOT EXISTS mbo_threads_employee ON mbo_threads (employee_id, updated_at)");
                 st.execute("""
                         CREATE TABLE IF NOT EXISTS mbo_entries (
@@ -105,17 +114,53 @@ public class MboStore {
         return threads("t.employee_id <> ?", accountId);
     }
 
+    /** Who this account may address an MBO to: their reporting managers, then active directors. */
+    public synchronized List<Counterpart> counterparts(long accountId) throws IOException {
+        List<Counterpart> out = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT a.id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
+                       CASE WHEN EXISTS (SELECT 1 FROM reporting_lines l
+                                         WHERE l.employee_id = ? AND l.manager_id = a.id)
+                            THEN 'manager' ELSE 'director' END AS relation
+                FROM accounts a
+                WHERE a.id <> ? AND a.status = 'active' AND (
+                      EXISTS (SELECT 1 FROM reporting_lines l WHERE l.employee_id = ? AND l.manager_id = a.id)
+                   OR EXISTS (SELECT 1 FROM account_roles r WHERE r.account_id = a.id AND r.role = 'director'))
+                ORDER BY relation DESC, 2""")) {
+            ps.setLong(1, accountId);
+            ps.setLong(2, accountId);
+            ps.setLong(3, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(new Counterpart(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4)));
+            }
+        } catch (SQLException e) {
+            throw new IOException("manager list failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
+
     // ---------------------------------------------------------------- writes
 
     /**
      * Start a thread. employeeId null or == who.id -> the employee raises it
-     * themselves; otherwise who must be on that employee's manager side.
+     * themselves and must name managerId (one of {@link #counterparts});
+     * otherwise who must be on that employee's manager side and is the manager.
      */
-    public synchronized long start(AuthStore.Account who, Long employeeId, String title, String body) throws IOException {
+    public synchronized long start(AuthStore.Account who, Long employeeId, Long managerId,
+                                   String title, String body) throws IOException {
         long emp = employeeId == null || employeeId == 0 ? who.id() : employeeId;
         String side = emp == who.id() ? EMPLOYEE : MANAGER;
-        if (side.equals(MANAGER) && !canManage(who, emp))
-            throw new ForbiddenException("only their reporting manager or a director can start an MBO for this person");
+        long mgr;
+        if (side.equals(MANAGER)) {
+            if (!canManage(who, emp))
+                throw new ForbiddenException("only their reporting manager or a director can start an MBO for this person");
+            mgr = who.id();
+        } else {
+            if (managerId == null || managerId == 0) throw new IllegalArgumentException("pick the manager to send it to");
+            mgr = managerId;
+            if (counterparts(who.id()).stream().noneMatch(c -> c.id() == mgr))
+                throw new IllegalArgumentException("you can only send an MBO to one of your reporting managers or a director");
+        }
         String t = clean(title);
         if (t.isEmpty()) throw new IllegalArgumentException("please give it a title");
         if (t.length() > MAX_TITLE) throw new IllegalArgumentException("title is too long (max " + MAX_TITLE + " characters)");
@@ -125,12 +170,13 @@ public class MboStore {
             conn.setAutoCommit(false);
             long id;
             try (PreparedStatement ps = conn.prepareStatement("""
-                    INSERT INTO mbo_threads (employee_id, title, waiting_on, started_by)
-                    VALUES (?, ?, ?, ?) RETURNING id""")) {
+                    INSERT INTO mbo_threads (employee_id, manager_id, title, waiting_on, started_by)
+                    VALUES (?, ?, ?, ?, ?) RETURNING id""")) {
                 ps.setLong(1, emp);
-                ps.setString(2, t);
-                ps.setString(3, other(side));
-                ps.setString(4, side);
+                ps.setLong(2, mgr);
+                ps.setString(3, t);
+                ps.setString(4, other(side));
+                ps.setString(5, side);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -152,7 +198,9 @@ public class MboStore {
         MboThread t = require(threadId);
         String side;
         if (t.employeeId() == who.id()) side = EMPLOYEE;
-        else if (canManage(who, t.employeeId())) side = MANAGER;
+        else if (answersFor(who, t)) side = MANAGER;
+        else if (canManage(who, t.employeeId()))
+            throw new ForbiddenException("this MBO is with " + t.managerName() + " - only they or a director can respond");
         else throw new ForbiddenException("you're not part of this MBO");
         if (!t.status().equals("open")) throw new IllegalArgumentException("this MBO is already " + t.status());
         if (!side.equals(t.waitingOn()))
@@ -203,6 +251,13 @@ public class MboStore {
         }
     }
 
+    /** May answer on the manager side: the named manager, or any director. */
+    private boolean answersFor(AuthStore.Account who, MboThread t) throws IOException {
+        if (who.id() == t.employeeId()) return false;
+        if (t.managerId() == null) return canManage(who, t.employeeId()); // pre-manager_id thread
+        return who.id() == t.managerId() || who.has(AuthStore.DIRECTOR);
+    }
+
     private boolean canManage(AuthStore.Account who, long employeeId) throws IOException {
         if (who.id() == employeeId) return false;
         if (who.has(AuthStore.DIRECTOR)) return true;
@@ -229,11 +284,12 @@ public class MboStore {
         Map<Long, MboThread> out = new LinkedHashMap<>();
         String sql = """
                 SELECT t.id, t.employee_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
-                       t.title, t.status, t.waiting_on, t.started_by,
+                       t.manager_id, COALESCE(NULLIF(m.full_name,''), m.email), t.title, t.status, t.waiting_on, t.started_by,
                        (EXTRACT(EPOCH FROM t.created_at) * 1000)::bigint,
                        (EXTRACT(EPOCH FROM t.updated_at) * 1000)::bigint
                 FROM mbo_threads t
                 JOIN accounts a ON a.id = t.employee_id
+                LEFT JOIN accounts m ON m.id = t.manager_id
                 """ + "WHERE " + where + " ORDER BY t.updated_at DESC LIMIT 1000";
         try {
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -241,8 +297,9 @@ public class MboStore {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.put(rs.getLong(1), new MboThread(rs.getLong(1), rs.getLong(2), rs.getString(3),
-                                rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
-                                rs.getString(8), rs.getLong(9), rs.getLong(10), new ArrayList<>()));
+                                rs.getString(4), (Long) rs.getObject(5), rs.getString(6), rs.getString(7),
+                                rs.getString(8), rs.getString(9), rs.getString(10), rs.getLong(11),
+                                rs.getLong(12), new ArrayList<>()));
                     }
                 }
             }

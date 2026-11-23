@@ -1,6 +1,6 @@
 /* MBOs — employee <-> manager discussions: propose, then acknowledge / deny / suggest changes. */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Avatar, Empty, Icon, Modal, Stat, Toasts, call } from './ui.jsx';
 
 const STATUS = {
@@ -22,7 +22,11 @@ const first = (name) => (name || '').split(/[\s@]/)[0];
 
 /** Which side of this thread the viewer is on. */
 const sideOf = (t, me) => (t.employeeId === me.id ? 'employee' : 'manager');
-const myTurn = (t, me) => t.status === 'open' && t.waitingOn === sideOf(t, me);
+/** Manager side is answered by the named manager or any director (no name = older thread, anyone). */
+const answers = (t, me) => sideOf(t, me) === 'employee' || t.managerId == null
+  || t.managerId === me.id || me.roles.includes('director');
+export const myTurn = (t, me) => t.status === 'open' && t.waitingOn === sideOf(t, me) && answers(t, me);
+const managerLabel = (t) => t.managerName || 'manager';
 /** Rounds = proposal + every counter-suggestion. */
 const rounds = (t) => t.entries.filter((e) => e.kind === 'proposal' || e.kind === 'suggest').length;
 const latestProposal = (t) => [...t.entries].reverse().find((e) => e.kind === 'proposal' || e.kind === 'suggest');
@@ -31,7 +35,7 @@ function StatusPill({ t, me }) {
   const s = STATUS[t.status];
   const label = t.status !== 'open' ? s.label
     : myTurn(t, me) ? 'Your turn'
-    : t.waitingOn === 'employee' ? `Waiting on ${first(t.employeeName)}` : 'Waiting on manager';
+    : t.waitingOn === 'employee' ? `Waiting on ${first(t.employeeName)}` : `Waiting on ${first(managerLabel(t))}`;
   return <span className={`pill ${myTurn(t, me) ? 'warn' : t.status === 'open' ? 'done' : s.pill}`}>{label}</span>;
 }
 
@@ -44,7 +48,7 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
   const mine = sideOf(t, me);
   const canAnswer = myTurn(t, me);
   const current = latestProposal(t);
-  const otherName = mine === 'employee' ? 'your manager' : first(t.employeeName);
+  const otherName = mine === 'employee' ? first(managerLabel(t)) : first(t.employeeName);
 
   const act = async (action) => {
     if (action === 'deny' && !window.confirm('Deny this MBO? This closes the discussion.')) return;
@@ -60,7 +64,7 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
     <Modal title={t.title} eyebrow={`MBO · ${t.employeeName}`} onClose={onClose}>
       <div className="mbo-meta">
         <StatusPill t={t} me={me} />
-        <span className="muted">started {fmtStamp(t.createdAt)} by the {t.startedBy} · {rounds(t)} round(s)</span>
+        <span className="muted">{t.employeeName} ↔ {managerLabel(t)} · started {fmtStamp(t.createdAt)} by the {t.startedBy} · {rounds(t)} round(s)</span>
       </div>
 
       <ol className="mbo-chat">
@@ -103,7 +107,7 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
           <Icon name="chat" />
           <span>{t.status !== 'open'
             ? `Closed as ${t.status}. This conversation is kept on record.`
-            : `Waiting for ${t.waitingOn === 'employee' ? first(t.employeeName) : 'the manager side'} to respond.`}</span>
+            : `Waiting for ${t.waitingOn === 'employee' ? first(t.employeeName) : managerLabel(t)} to respond.`}</span>
         </div>
       )}
     </Modal>
@@ -114,6 +118,16 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
 
 function NewMboDialog({ me, people, onClose, onSaved }) {
   const [employeeId, setEmployeeId] = useState('');
+  const [managerId, setManagerId] = useState('');
+  const [managers, setManagers] = useState(null); // employee only: who they can send to
+  useEffect(() => {
+    if (people) return;
+    call('GET', '/api/mbo/managers', null, me.token).then((d) => {
+      setManagers(d.managers || []);
+      const own = (d.managers || []).filter((m) => m.relation === 'manager');
+      if (own.length === 1) setManagerId(String(own[0].id)); // the usual case: one manager
+    }).catch((e) => { setManagers([]); setError(e.message); });
+  }, [people, me.token]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [error, setError] = useState(null);
@@ -123,8 +137,12 @@ function NewMboDialog({ me, people, onClose, onSaved }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await call('POST', '/api/mbo', { employeeId: people ? Number(employeeId) : null, title, body }, me.token);
-      onSaved(people ? 'MBO sent — waiting on the employee' : 'MBO sent to your manager');
+      await call('POST', '/api/mbo', {
+        employeeId: people ? Number(employeeId) : null,
+        managerId: people ? null : Number(managerId), title, body,
+      }, me.token);
+      const to = managers?.find((m) => String(m.id) === managerId);
+      onSaved(people ? 'MBO sent — waiting on the employee' : `MBO sent to ${to?.name || 'your manager'}`);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -141,6 +159,26 @@ function NewMboDialog({ me, people, onClose, onSaved }) {
             </select>
           </label>
         )}
+        {!people && (
+          <label className="field">
+            <span>Send to</span>
+            {managers && !managers.length ? (
+              <div className="inline err">There's no manager or director to send it to yet — ask a director to set your reporting manager.</div>
+            ) : (
+              <select value={managerId} required disabled={!managers} onChange={(e) => setManagerId(e.target.value)}>
+                <option value="" disabled>{managers ? 'Pick a manager…' : 'Loading…'}</option>
+                {[['manager', 'Your managers'], ['director', 'Directors']].map(([rel, label]) => {
+                  const list = (managers || []).filter((m) => m.relation === rel);
+                  return list.length > 0 && (
+                    <optgroup key={rel} label={label}>
+                      {list.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </optgroup>
+                  );
+                })}
+              </select>
+            )}
+          </label>
+        )}
         <label className="field">
           <span>Objective</span>
           <input maxLength={200} required value={title} onChange={(e) => setTitle(e.target.value)}
@@ -153,12 +191,12 @@ function NewMboDialog({ me, people, onClose, onSaved }) {
         </label>
         <small className="dim">
           {people ? 'They can acknowledge it, deny it, or suggest changes.'
-            : 'Your manager can acknowledge it, deny it, or suggest changes.'} The whole conversation is kept on record.
+            : 'They can acknowledge it, deny it, or suggest changes.'} The whole conversation is kept on record.
         </small>
         {error && <div className="inline err">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !title.trim() || !body.trim() || (people && !employeeId)}>
+          <button className="btn primary" disabled={busy || !title.trim() || !body.trim() || (people ? !employeeId : !managerId)}>
             {busy ? 'Sending…' : 'Send'}
           </button>
         </div>
@@ -178,6 +216,7 @@ function ThreadTable({ me, threads, showName, onOpen, empty }) {
           <tr>
             {showName && <th>Person</th>}
             <th>Objective</th>
+            <th>Manager</th>
             <th>Rounds</th>
             <th>Status</th>
             <th>Last activity</th>
@@ -196,6 +235,7 @@ function ThreadTable({ me, threads, showName, onOpen, empty }) {
                   <b>{t.title}</b>
                   {last && <small className="sub reason" title={last.body}>{last.authorName}: {KIND[last.kind].toLowerCase()}{last.body ? ` — ${last.body}` : ''}</small>}
                 </td>
+                <td>{t.managerId === me.id ? 'You' : managerLabel(t)}</td>
                 <td className="mono strong">{rounds(t)}</td>
                 <td><StatusPill t={t} me={me} /></td>
                 <td className="mono dim">{fmtStamp(t.updatedAt)}</td>
@@ -309,6 +349,7 @@ export function OpsMbo({ me, isDirector, threads, people, reload }) {
   const [q, setQ] = useState('');
   const waiting = threads.filter((t) => myTurn(t, me)).sort((a, b) => a.updatedAt - b.updatedAt);
   const count = (s) => threads.filter((t) => t.status === s).length;
+  const othersTurn = threads.filter((t) => t.status === 'open' && t.waitingOn === 'manager' && !myTurn(t, me)).length;
   const shown = threads.filter((t) => (!status || t.status === status) &&
     (!q || `${t.employeeName} ${t.employeeEmail} ${t.title}`.toLowerCase().includes(q.toLowerCase())));
   // one option per person (a manager's team list has a row per project line), never yourself
@@ -323,7 +364,8 @@ export function OpsMbo({ me, isDirector, threads, people, reload }) {
     <div className="stats">
       <Stat label="Waiting on you" value={waiting.length} accent={waiting.length ? 'saffron' : ''} icon="chat"
             foot={waiting.length ? `oldest from ${first(waiting[0].employeeName)}` : 'all caught up'} />
-      <Stat label="Waiting on employee" value={count('open') - waiting.length} icon="clock" foot="you've responded" />
+      <Stat label="Waiting on employee" value={count('open') - waiting.length - othersTurn} icon="clock"
+            foot={othersTurn ? `+${othersTurn} with another manager` : 'you\u2019ve responded'} />
       <Stat label="Acknowledged" value={count('acknowledged')} accent="cyan" icon="approve" foot="agreed objectives" />
       <Stat label="Denied" value={count('denied')} icon="log" foot={isDirector ? 'across everyone' : 'across your team'} />
     </div>
