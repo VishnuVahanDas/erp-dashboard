@@ -301,6 +301,16 @@ function BalanceStats({ balance, year }) {
 
 /* ------------------------------------------------------------- employee */
 
+/** The Leave tab's two balance tiles, for the employee's "My dashboard". */
+export function LeaveBalance({ me }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    call('GET', '/api/leave/my', null, me.token).then(setData).catch(() => setData(null));
+  }, [me.token]);
+  if (!data?.balance?.length) return null;
+  return <BalanceStats balance={data.balance} year={data.year} />;
+}
+
 /** Employee "Leave" tab: balance, calendar, history, new request. */
 export function EmployeeLeave({ me }) {
   const [data, setData] = useState({ requests: [], balance: [], year: null });

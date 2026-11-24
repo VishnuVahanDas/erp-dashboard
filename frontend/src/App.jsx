@@ -3,7 +3,7 @@ import {
   Avatar, DroneMark, Empty, Icon, Modal, Stat, Toasts, call, dayOf, fmtDuration, greeting, groupByDay, hhmm,
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
-import { DashboardLeave, EmployeeLeave, OpsLeave } from './leave.jsx';
+import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
@@ -315,6 +315,7 @@ function EmployeeView({ me, ctx }) {
            title={{ home: name, leave: 'My leave', mbo: 'My MBOs' }[tab] || 'My flight log'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
+      {tab === 'home' && <LeaveBalance me={me} />}
       {tab === 'leave' && <EmployeeLeave me={me} />}
       {tab === 'mbo' && <EmployeeMbo me={me} threads={mbos} reload={loadMbo} />}
 
