@@ -6,6 +6,7 @@ import {
 import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave, makeBalanceOf } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 import { EmployeePayslips, OpsPayroll } from './payroll.jsx';
+import { PersonDialog, TeamsView } from './team.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -660,6 +661,8 @@ function OpsView({ me, ctx, scope }) {
   const [q, setQ] = useState('');
   const [day, setDay] = useState('');
   const [pq, setPq] = useState('');
+  const [peopleView, setPeopleView] = useState('teams'); // director: teams | all
+  const [viewing, setViewing] = useState(null); // person whose details are open
   const [editing, setEditing] = useState(null); // null | 'new' | person
   const [leaves, setLeaves] = useState([]);
   const [leaveBalanceOf, setLeaveBalanceOf] = useState(null); // (accountId, year) -> balances
@@ -842,12 +845,24 @@ function OpsView({ me, ctx, scope }) {
         </section>
       )}
 
-      {tab === 'people' && (
+      {tab === 'people' && isDirector && (
+        <div className="role-picks pay-sections">
+          {[['teams', 'Teams'], ['all', 'Everyone']].map(([k, label]) => (
+            <button key={k} className={`role-pick ${peopleView === k ? 'on' : ''}`} onClick={() => setPeopleView(k)}>{label}</button>
+          ))}
+          <button className="btn primary push" onClick={() => setEditing('new')}><Icon name="plus" />Add person</button>
+        </div>
+      )}
+      {tab === 'people' && isDirector && peopleView === 'teams' && (
+        <TeamsView people={people} leaves={leaves} onOpenPerson={setViewing} />
+      )}
+
+      {tab === 'people' && (!isDirector || peopleView === 'all') && (
         <section className="panel">
           <div className="toolbar">
             <label className="search"><Icon name="search" /><input placeholder="Search name, email, manager or project…" value={pq} onChange={(e) => setPq(e.target.value)} /></label>
-            <span className="muted push">{headcount} {isDirector ? 'people' : 'reportee(s)'}</span>
-            <button className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" />{isDirector ? 'Add person' : 'Add employee'}</button>
+            <span className="muted push">{headcount} {isDirector ? 'people' : 'reportee(s)'} · click a row for details</span>
+            {!isDirector && <button className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" />Add employee</button>}
           </div>
           {shownPeople.length === 0 ? (
             <Empty title={people.length ? 'No matches' : isDirector ? 'No people yet' : 'Nobody reports to you yet'}
@@ -862,7 +877,7 @@ function OpsView({ me, ctx, scope }) {
                 </thead>
                 <tbody>
                   {shownPeople.map((p, i) => (
-                    <tr key={`${p.id}-${i}`}>
+                    <tr key={`${p.id}-${i}`} className="mbo-row" onClick={() => setViewing(p)}>
                       <td><div className="who"><Avatar label={p.name || p.email} /><span>{p.name || p.email.split('@')[0]}{p.id === me.id && ' (you)'}<small>{p.email}</small></span></div></td>
                       {isDirector ? (<>
                         <td><RoleChips roles={p.roles} /></td>
@@ -870,7 +885,7 @@ function OpsView({ me, ctx, scope }) {
                       </>) : <td>{p.project || <span className="dim">—</span>}</td>}
                       <td className="mono">{p.enrollNumber != null ? `#${p.enrollNumber}` : <span className="dim">not linked</span>}</td>
                       <td><span className={`pill ${p.status === 'active' ? 'live' : 'idle'}`}>{p.status}</span></td>
-                      {isDirector && <td className="row-act"><button className="icon-btn neutral" title="Edit" onClick={() => setEditing(p)}><Icon name="edit" /></button></td>}
+                      {isDirector && <td className="row-act"><button className="icon-btn neutral" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(p); }}><Icon name="edit" /></button></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -879,6 +894,8 @@ function OpsView({ me, ctx, scope }) {
           )}
         </section>
       )}
+
+      {viewing && <PersonDialog me={me} person={viewing} leaves={leaves} balanceOf={leaveBalanceOf} mbos={mbos} onClose={() => setViewing(null)} />}
 
       {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} />}
       {tab === 'mbo' && <OpsMbo me={me} isDirector={isDirector} threads={mbos} people={people} reload={loadMbo} />}

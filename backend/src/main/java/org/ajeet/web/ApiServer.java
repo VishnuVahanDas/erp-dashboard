@@ -112,6 +112,28 @@ public class ApiServer {
                 boolean today = "today".equals(query(ex, "range"));
                 send(ex, 200, punchesJson(attendance.punchesForTeam(
                         auth.teamEnrolls(acct.id()), today, queryDate(ex))));
+            } else if (method.equals("GET") && path.matches("/attendance/person/\\d+")) {
+                // one person's month for the People details: directors anyone, managers their reportees
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                long id = Long.parseLong(path.substring("/attendance/person/".length()));
+                if (!acct.has(AuthStore.DIRECTOR)
+                        && auth.team(acct.id()).stream().noneMatch(m -> m.id() == id && id != acct.id()))
+                    throw new ForbiddenException("you can only see attendance for people who report to you");
+                AuthStore.Account person = auth.account(id);
+                if (person == null) throw new IllegalArgumentException("person not found");
+                String m = query(ex, "month");
+                java.time.YearMonth ym;
+                try {
+                    ym = m == null || m.isBlank() ? java.time.YearMonth.now() : java.time.YearMonth.parse(m);
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException("month must be YYYY-MM");
+                }
+                ObjectNode out = mapper.createObjectNode();
+                out.put("month", ym.toString());
+                out.put("linked", person.enrollNumber() != null);
+                out.set("punches", mapper.valueToTree(person.enrollNumber() == null ? List.of()
+                        : attendance.punchesBetween(person.enrollNumber(), ym.atDay(1), ym.plusMonths(1).atDay(1))));
+                send(ex, 200, out);
             } else if (method.equals("GET") && path.equals("/attendance/today")) {
                 requireRole(ex, AuthStore.DIRECTOR);
                 send(ex, 200, punchesJson(attendance.punchesToday()));

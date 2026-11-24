@@ -92,6 +92,7 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/auth/password` | signed in | `{current, next}` |
 | GET  | `/api/attendance/my` | employee | own punches |
 | GET  | `/api/attendance/team[?range=today]` | manager | reportees' punches |
+| GET  | `/api/attendance/person/{accountId}?month=YYYY-MM` | director (anyone), manager (reportees) | one person's punches that month + `linked`; for the People details |
 | GET  | `/api/attendance/today`, `/all` | director | everyone's punches |
 | GET  | `/api/team` | manager | reportees (one row per project line) |
 | GET  | `/api/people` | director | everyone + roles + `reportsTo` |
@@ -188,6 +189,14 @@ requests waiting for them. Directors still see and decide everything. Each line 
 generated, so a payslip doesn't change if punches are re-synced later.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
 the browser); directors can export a month as CSV for the bank or accountant.
+
+**People → Teams:** directors open People on teams — one per manager, built
+from `reporting_lines` (someone with two managers is in both; managers can sit
+in another team) — with the total headcount and who isn't in a team. Clicking a
+team lists its members; clicking anyone (here, in Everyone, or in a manager's
+team list) opens their details: leave taken / pending / left this year and
+recent requests, attendance for a month (days present, hours, short days),
+current salary and last payslip, and MBO results.
 
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
