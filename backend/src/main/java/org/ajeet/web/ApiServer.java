@@ -232,7 +232,7 @@ public class ApiServer {
                 AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 send(ex, 200, mapper.createObjectNode().set("salaries", mapper.valueToTree(payroll.salaries(acct))));
             } else if (method.equals("POST") && path.equals("/payroll/salaries")) {
-                // director: applied at once; manager: a proposal for a reportee, pending a director
+                // a director, or a manager for one of their reportees: applies at once
                 AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 JsonNode b = readJson(ex);
                 PayrollStore.Saved saved = payroll.addSalary(acct, new PayrollStore.SalaryInput(b.path("accountId").asLong(0),
@@ -250,11 +250,13 @@ public class ApiServer {
                         b.path("note").asText(""));
                 send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
             } else if (method.equals("POST") && path.matches("/payroll/recommendations/\\d+/decline")) {
-                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                // a director, or one of that person's managers (checked in the store)
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 payroll.declineRecommendation(acct, Long.parseLong(path.split("/")[3]), readJson(ex).path("note").asText(""));
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
             } else if (method.equals("POST") && path.matches("/payroll/salaries/\\d+/(approve|reject)")) {
-                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                // a director, or one of that person's managers (checked in the store)
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 String[] parts = path.split("/");
                 payroll.decideSalary(acct, Long.parseLong(parts[3]), parts[4].equals("approve"),
                         readJson(ex).path("note").asText(""));

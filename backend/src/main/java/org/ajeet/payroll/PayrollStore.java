@@ -217,27 +217,23 @@ public class PayrollStore {
     }
 
     /**
-     * A director's save is approved at once. A manager's save for one of
-     * their reportees is a pending proposal a director must approve; only one
-     * proposal per person can wait at a time.
+     * Saved by an approver for that person (any director, or one of the
+     * person's managers - never for themselves), so it applies at once. It
+     * also closes open requests for the person: a pending recommendation is
+     * accepted, a pending proposal is replaced (rejected with a note).
      */
     public synchronized Saved addSalary(AuthStore.Account who, SalaryInput in) throws IOException {
         if (in.accountId() <= 0) throw new IllegalArgumentException("pick the employee");
-        boolean director = who.has(AuthStore.DIRECTOR);
-        if (!director) {
-            if (!who.has(AuthStore.MANAGER) || in.accountId() == who.id() || !reportsTo(in.accountId(), who.id()))
-                throw new ForbiddenException("you can only propose a salary for someone who reports to you");
-            if (hasPending(in.accountId()))
-                throw new IllegalArgumentException("a salary proposal for this person is already waiting for a director");
-            if (hasPendingRecommendation(in.accountId()))
-                throw new IllegalArgumentException("this person is already recommended for payroll - a director will set the salary");
-        }
+        if (!canApprove(who, in.accountId()))
+            throw new ForbiddenException(in.accountId() == who.id()
+                    ? "you can't set your own salary - ask a director"
+                    : "you can only set salaries for people who report to you");
         money(in.basic(), "basic");
         money(in.hra(), "HRA");
         money(in.otherAllowance(), "other allowance");
         if (in.basic() + in.hra() + in.otherAllowance() <= 0) throw new IllegalArgumentException("salary must be more than 0");
         LocalDate from = date(in.effectiveFrom(), "effective from");
-        String status = director ? "approved" : "pending";
+        String status = "approved";
         try {
             conn.setAutoCommit(false);
             long id;
@@ -253,23 +249,32 @@ public class PayrollStore {
                 ps.setDate(5, Date.valueOf(from));
                 ps.setLong(6, who.id());
                 ps.setString(7, status);
-                if (director) ps.setLong(8, who.id()); else ps.setNull(8, java.sql.Types.BIGINT);
-                ps.setBoolean(9, director);
+                ps.setLong(8, who.id());
+                ps.setBoolean(9, true);
                 ps.setLong(10, in.accountId());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw new IllegalArgumentException("employee not found");
                     id = rs.getLong(1);
                 }
             }
-            if (director) {
-                // setting the salary is how a director accepts a manager's recommendation
-                try (PreparedStatement ps = conn.prepareStatement("""
-                        UPDATE payroll_recommendations SET status = 'accepted', decided_by = ?, decided_at = now()
-                        WHERE account_id = ? AND status = 'pending'""")) {
-                    ps.setLong(1, who.id());
-                    ps.setLong(2, in.accountId());
-                    ps.executeUpdate();
-                }
+            // setting the salary is how an approver accepts a recommendation ...
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    UPDATE payroll_recommendations SET status = 'accepted', decided_by = ?, decided_at = now()
+                    WHERE account_id = ? AND status = 'pending'""")) {
+                ps.setLong(1, who.id());
+                ps.setLong(2, in.accountId());
+                ps.executeUpdate();
+            }
+            // ... and it replaces any proposal still waiting
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    UPDATE payroll_salaries SET status = 'rejected', decided_by = ?, decided_at = now(),
+                        decision_note = 'replaced by a salary set by ' || ?
+                    WHERE account_id = ? AND status = 'pending' AND id <> ?""")) {
+                ps.setLong(1, who.id());
+                ps.setString(2, who.name() == null || who.name().isBlank() ? who.email() : who.name());
+                ps.setLong(3, in.accountId());
+                ps.setLong(4, id);
+                ps.executeUpdate();
             }
             conn.commit();
             return new Saved(id, status);
@@ -354,6 +359,7 @@ public class PayrollStore {
 
     /** Director declines a pending recommendation, with a reason the manager sees. */
     public synchronized void declineRecommendation(AuthStore.Account who, long id, String note) throws IOException {
+        requireApprover(who, "SELECT account_id FROM payroll_recommendations WHERE id = ?", id, "recommendation");
         String n = note == null ? "" : note.trim();
         if (n.isEmpty()) throw new IllegalArgumentException("say why the recommendation is declined");
         if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");
@@ -367,6 +373,28 @@ public class PayrollStore {
         } catch (SQLException e) {
             throw new IOException("recommendation decline failed: " + e.getMessage(), e);
         }
+    }
+
+    /** May set / approve pay for this person: any director, or one of their managers - never yourself. */
+    private boolean canApprove(AuthStore.Account who, long accountId) throws IOException {
+        if (who.has(AuthStore.DIRECTOR)) return true;
+        return who.has(AuthStore.MANAGER) && accountId != who.id() && reportsTo(accountId, who.id());
+    }
+
+    /** Looks up whose request a row is and requires `who` to be an approver for them. */
+    private void requireApprover(AuthStore.Account who, String sql, long id, String what) throws IOException {
+        long accountId;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) throw new IllegalArgumentException(what + " not found");
+                accountId = rs.getLong(1);
+            }
+        } catch (SQLException e) {
+            throw new IOException(what + " lookup failed: " + e.getMessage(), e);
+        }
+        if (!canApprove(who, accountId))
+            throw new ForbiddenException("only a director or this person's manager can decide this " + what);
     }
 
     private boolean hasPendingRecommendation(long accountId) throws IOException {
@@ -390,6 +418,7 @@ public class PayrollStore {
 
     /** Director approves or rejects a manager's pending proposal. First decision wins. */
     public synchronized void decideSalary(AuthStore.Account who, long id, boolean approve, String note) throws IOException {
+        requireApprover(who, "SELECT account_id FROM payroll_salaries WHERE id = ?", id, "salary proposal");
         String n = note == null ? "" : note.trim();
         if (!approve && n.isEmpty()) throw new IllegalArgumentException("say why the proposal is rejected");
         if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");

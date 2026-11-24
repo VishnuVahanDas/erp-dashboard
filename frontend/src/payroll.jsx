@@ -320,8 +320,8 @@ function RunPanel({ me, isDirector, flash, setError }) {
 const SAL_STATUS = { approved: 'live', pending: 'warn', rejected: 'bad' };
 const SAL_LABEL = { approved: 'Approved', pending: 'Waiting for a director', rejected: 'Rejected' };
 
-/** Director: saved at once. Manager: a proposal a director approves. */
-function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone }) {
+/** Set or change a salary. Directors and the person's managers can; it applies at once. */
+function SalaryDialog({ me, people, person, preset, onClose, onDone }) {
   const today = new Date().toLocaleDateString('sv');
   const [accountId, setAccountId] = useState(person ? String(person.accountId) : preset ? String(preset.accountId) : '');
   const [basic, setBasic] = useState(person ? String(person.basic) : '');
@@ -332,7 +332,7 @@ function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone 
   const [busy, setBusy] = useState(false);
   const gross = (Number(basic) || 0) + (Number(hra) || 0) + (Number(other) || 0);
   const day = gross / 30;
-  const verb = isDirector ? (person ? 'Change salary' : 'Set salary') : (person ? 'Propose a change' : 'Propose a salary');
+  const verb = person ? 'Change salary' : 'Set salary';
 
   const submit = async (e) => {
     e.preventDefault();
@@ -342,7 +342,7 @@ function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone 
         accountId: Number(accountId), basic: Number(basic) || 0, hra: Number(hra) || 0,
         otherAllowance: Number(other) || 0, effectiveFrom: from,
       }, me.token);
-      onDone(r.status === 'pending' ? 'Sent to a director for approval' : 'Salary saved');
+      onDone(r.status === 'pending' ? 'Sent for approval' : 'Salary saved');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -378,7 +378,7 @@ function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone 
           Gross <b>{money(gross)}</b> / month · in a 30-day month that's <b>{money(day)}</b> a day, <b>{money(day / 8)}</b> an hour missed.
         </span></div>
         <small className="dim">
-          {isDirector ? 'Applies straight away. ' : 'A director has to approve it before it counts for payroll. '}
+          Applies straight away; directors can still change it.{' '}
           A change adds a new row — the old salary stays in the history. The first salary's date is the
           joining date: a mid-month start is paid from that day.
         </small>
@@ -386,7 +386,7 @@ function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone 
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy || !accountId || gross <= 0}>
-            {busy ? 'Saving…' : isDirector ? 'Save salary' : 'Send for approval'}
+            {busy ? 'Saving…' : 'Save salary'}
           </button>
         </div>
       </form>
@@ -436,7 +436,7 @@ function RecommendDialog({ me, people, preselect, onClose, onDone }) {
     try {
       await call('POST', '/api/payroll/recommendations', { accountId: Number(accountId), startDate: start, note }, me.token);
       const who = people.find((x) => String(x.id) === accountId);
-      onDone(`Recommended ${who?.name || who?.email || 'them'} for payroll — a director will set the salary`);
+      onDone(`Recommended ${who?.name || who?.email || 'them'} for payroll`);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -456,7 +456,7 @@ function RecommendDialog({ me, people, preselect, onClose, onDone }) {
           <textarea rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)}
                     placeholder="e.g. Joined as drone pilot on the survey team, full-time." />
         </label>
-        <small className="dim">No amount needed — a director decides the salary. They aren't paid until the director sets it.</small>
+        <small className="dim">No amount needed — a director or another of their managers sets the salary. They aren't paid until then.</small>
         {error && <div className="inline err">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -680,11 +680,11 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
 
     {recommending && <RecommendDialog me={me} people={without} onClose={() => setRecommending(false)} onDone={done} />}
     {declining && <DeclineDialog me={me} rec={declining} onClose={() => setDeclining(null)} onDone={done} />}
-    {accepting && <SalaryDialog me={me} isDirector={isDirector} people={[]}
+    {accepting && <SalaryDialog me={me} people={[]}
                                 preset={{ accountId: accepting.accountId, name: accepting.name, effectiveFrom: accepting.startDate,
                                           by: accepting.recommendedBy, note: accepting.note }}
                                 onClose={() => setAccepting(null)} onDone={done} />}
-    {editing && <SalaryDialog me={me} isDirector={isDirector} people={without} person={editing === 'new' ? null : editing}
+    {editing && <SalaryDialog me={me} people={without} person={editing === 'new' ? null : editing}
                               onClose={() => setEditing(null)} onDone={done} />}
     {rejecting && <RejectDialog me={me} row={rejecting} onClose={() => setRejecting(null)} onDone={done} />}
     {history && (
@@ -710,15 +710,19 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
 /* --------------------------------------------------------- manager team */
 
 /**
- * Manager's "My team": every reportee with their payroll status, and the way
- * to add one to payroll (recommend to a director) or propose a change.
+ * Manager's "My team": every reportee with their payroll status. Managers
+ * approve pay for their own team - setting a salary applies at once - and
+ * decide requests for their reportees (e.g. a co-manager's recommendation).
  */
 function TeamPanel({ me, people, flash, setError }) {
   const [rows, setRows] = useState([]);
   const [recs, setRecs] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [recommend, setRecommend] = useState(null); // null | 'pick' | accountId
-  const [proposing, setProposing] = useState(null); // null | {person?, preset?}
+  const [recommend, setRecommend] = useState(null);  // null | 'pick' | accountId
+  const [setting, setSetting] = useState(null);      // null | {pick} | {person} | {preset}
+  const [declining, setDeclining] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const [busy, setBusy] = useState(null);
   const load = useCallback(async () => {
     try {
       const [sal, rec] = await Promise.all([
@@ -754,29 +758,85 @@ function TeamPanel({ me, people, flash, setError }) {
     return { salary, proposal, rec, lastNo };
   };
   const states = team.map((p) => ({ p, ...stateOf(p.id) }));
-  const addable = states.filter((x) => !x.salary && !x.proposal && !x.rec).map((x) => x.p);
+  const notOnPayroll = states.filter((x) => !x.salary).map((x) => x.p);
+  const recommendable = states.filter((x) => !x.salary && !x.proposal && !x.rec).map((x) => x.p);
   const onPayroll = states.filter((x) => x.salary).length;
-  const waiting = states.filter((x) => x.proposal || x.rec).length;
-  const done = (m) => { setRecommend(null); setProposing(null); flash(m); load(); };
+  const openRecs = states.filter((x) => x.rec).map((x) => x.rec);
+  const openProposals = states.filter((x) => x.proposal).map((x) => x.proposal);
+  const done = (m) => {
+    setRecommend(null); setSetting(null); setDeclining(null); setRejecting(null);
+    flash(m); load();
+  };
+  const approve = async (r) => {
+    setBusy(r.id);
+    try { await call('POST', `/api/payroll/salaries/${r.id}/approve`, {}, me.token); done(`Approved ${r.name}'s salary`); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(null); }
+  };
   const mine = recs.filter((r) => team.some((p) => p.id === r.accountId));
 
   if (!loaded) return <p className="muted">Loading…</p>;
   return (<>
     <div className="stats">
       <Stat label="Reportees" value={team.length} icon="team" foot="people who report to you" />
-      <Stat label="On payroll" value={onPayroll} accent="cyan" icon="money" foot="salary set by a director" />
-      <Stat label="Waiting for a director" value={waiting} accent={waiting ? 'saffron' : ''} icon="clock" foot="recommended or proposed" />
-      <Stat label="Not on payroll" value={addable.length} accent={addable.length ? 'alert' : ''} icon="user"
-            foot={addable.length ? 'add them below' : 'everyone is covered'} />
+      <Stat label="On payroll" value={onPayroll} accent="cyan" icon="money" foot="salary set" />
+      <Stat label="Waiting for you" value={openRecs.length + openProposals.length} accent={openRecs.length + openProposals.length ? 'saffron' : ''}
+            icon="clock" foot="recommendations to decide" />
+      <Stat label="Not on payroll" value={notOnPayroll.length} accent={notOnPayroll.length ? 'alert' : ''} icon="user"
+            foot={notOnPayroll.length ? 'set their salary below' : 'everyone is covered'} />
     </div>
+
+    {(openRecs.length > 0 || openProposals.length > 0) && (
+      <section className="panel">
+        <div className="panel-head"><h3>Waiting for you</h3><span className="muted">{openRecs.length + openProposals.length} to decide</span></div>
+        <div className="leave-cards">
+          {openRecs.map((r) => (
+            <div key={`rec${r.id}`} className="leave-card">
+              <div className="who"><Avatar label={r.name} /><span>{r.name}<small>recommended by {r.recommendedBy === (me.name || me.email) ? 'you' : r.recommendedBy} · {fmtStamp(r.createdAt)}</small></span></div>
+              <b>{r.startDate ? `Start ${fmtDay(r.startDate)} ${r.startDate.slice(0, 4)}` : 'No start date given'}</b>
+              {r.note ? <p title={r.note}>{r.note}</p> : <p className="dim">No note.</p>}
+              <div className="leave-act">
+                <button className="btn danger small" onClick={() => setDeclining(r)}>Decline</button>
+                <button className="btn primary small" onClick={() => setSetting({ preset: { accountId: r.accountId, name: r.name, effectiveFrom: r.startDate, by: r.recommendedBy, note: r.note } })}>
+                  <Icon name="money" size={15} />Set salary
+                </button>
+              </div>
+            </div>
+          ))}
+          {openProposals.map((r) => {
+            const now = rows.find((x) => x.accountId === r.accountId && x.status === 'approved');
+            return (
+              <div key={`sal${r.id}`} className="leave-card">
+                <div className="who"><Avatar label={r.name} /><span>{r.name}<small>proposed by {r.createdBy} · {fmtStamp(r.createdAt)}</small></span></div>
+                <div className="pay-propose">
+                  <span><small>Now</small><b>{now ? money(now.gross) : 'no salary'}</b></span>
+                  <span>→</span>
+                  <span><small>Proposed from {r.effectiveFrom}</small><b>{money(r.gross)}</b></span>
+                </div>
+                <div className="leave-act">
+                  <button className="btn danger small" onClick={() => setRejecting(r)}>Reject</button>
+                  <button className="btn primary small" disabled={busy === r.id} onClick={() => approve(r)}><Icon name="approve" size={15} />Approve</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    )}
 
     <section className="panel">
       <div className="panel-head">
         <h3>My team</h3>
-        <button className="btn primary" onClick={() => setRecommend('pick')} disabled={!addable.length}
-                title={addable.length ? 'Pick a reportee and recommend them to a director' : 'Everyone in your team is on payroll or waiting'}>
-          <Icon name="plus" />Add reportee to payroll
-        </button>
+        <div className="leave-act">
+          <button className="btn ghost" onClick={() => setRecommend('pick')} disabled={!recommendable.length}
+                  title={recommendable.length ? 'Leave the amount to a director or a co-manager' : 'Everyone is on payroll or already waiting'}>
+            <Icon name="team" />Recommend instead
+          </button>
+          <button className="btn primary" onClick={() => setSetting({ pick: true })} disabled={!notOnPayroll.length}
+                  title={notOnPayroll.length ? 'Pick a reportee and set their salary' : 'Everyone in your team is on payroll'}>
+            <Icon name="plus" />Add reportee to payroll
+          </button>
+        </div>
       </div>
       {!team.length ? (
         <Empty title="No one reports to you yet" hint="Ask a director to set you as someone's reporting manager, or add an employee from My team." />
@@ -796,20 +856,24 @@ function TeamPanel({ me, people, flash, setError }) {
                       : <span className="pill idle">Not on payroll</span>}
                     {rec && <small className="sub">by {rec.recommendedBy} · {fmtStamp(rec.createdAt)}</small>}
                     {proposal && <small className="sub">{money(proposal.gross)} from {proposal.effectiveFrom}</small>}
-                    {!rec && !proposal && lastNo && (
+                    {salary && !rec && !proposal && <small className="sub">set by {salary.decidedBy || salary.createdBy || '—'}</small>}
+                    {!rec && !proposal && !salary && lastNo && (
                       <small className="sub pay-rejected" title={lastNo.decisionNote}>
                         {lastNo.status === 'declined' ? 'recommendation declined' : 'proposal rejected'}: “{lastNo.decisionNote}”</small>
                     )}
                   </td>
                   <td className="mono">{salary ? <>{money(salary.gross)}<small className="sub">since {salary.effectiveFrom}</small></> : <span className="dim">—</span>}</td>
                   <td className="row-act"><div className="leave-act">
-                    {!salary && !proposal && !rec && (<>
-                      <button className="btn ghost small" onClick={() => setProposing({ preset: { accountId: p.id, name: p.name || p.email } })}
-                              title="Suggest the amount yourself">Propose a salary</button>
-                      <button className="btn primary small" onClick={() => setRecommend(p.id)}><Icon name="plus" size={14} />Add to payroll</button>
-                    </>)}
-                    {salary && !proposal && (
-                      <button className="btn ghost small" onClick={() => setProposing({ person: salary })}><Icon name="edit" size={14} />Propose change</button>
+                    {!salary && !proposal && !rec && (
+                      <button className="btn ghost small" onClick={() => setRecommend(p.id)} title="Leave the amount to a director or co-manager">Recommend</button>
+                    )}
+                    {!salary && (
+                      <button className="btn primary small" onClick={() => setSetting({ preset: { accountId: p.id, name: p.name || p.email, by: 'you' } })}>
+                        <Icon name="plus" size={14} />Set salary
+                      </button>
+                    )}
+                    {salary && (
+                      <button className="btn ghost small" onClick={() => setSetting({ person: salary })}><Icon name="edit" size={14} />Change</button>
                     )}
                   </div></td>
                 </tr>
@@ -818,18 +882,19 @@ function TeamPanel({ me, people, flash, setError }) {
           </table>
         </div>
       )}
-      <small className="dim pay-foot"><b>Add to payroll</b> recommends the person to a director, who sets the salary.
-        <b> Propose a salary</b> does the same with an amount you suggest. Nobody is paid until a director approves.</small>
+      <small className="dim pay-foot">You approve pay for your own team: a salary you set applies straight away (it also closes any
+        recommendation for that person). <b>Recommend</b> leaves the amount to a director or another of their managers.
+        Directors can still see and change everything.</small>
     </section>
 
     {mine.length > 0 && (
       <section className="panel">
-        <div className="panel-head"><h3>Your recommendations</h3><span className="muted">{mine.filter((r) => r.status === 'pending').length} waiting</span></div>
+        <div className="panel-head"><h3>Recommendations</h3><span className="muted">{mine.filter((r) => r.status === 'pending').length} waiting</span></div>
         <ul className="perf-list">
           {mine.slice(0, 20).map((r) => (
             <li key={r.id}>
               <span><b>{r.name}</b>
-                <small>recommended {fmtStamp(r.createdAt)}{r.startDate ? ` · start ${r.startDate}` : ''}{r.note ? ` · “${r.note}”` : ''}</small>
+                <small>recommended by {r.recommendedBy || '—'} {fmtStamp(r.createdAt)}{r.startDate ? ` · start ${r.startDate}` : ''}{r.note ? ` · “${r.note}”` : ''}</small>
                 {r.status !== 'pending' && <small className={r.status === 'declined' ? 'pay-rejected' : ''}>
                   {r.status} by {r.decidedBy || '—'} {fmtStamp(r.decidedAt)}{r.decisionNote ? ` — “${r.decisionNote}”` : ''}</small>}
               </span>
@@ -840,11 +905,12 @@ function TeamPanel({ me, people, flash, setError }) {
       </section>
     )}
 
-    {recommend && <RecommendDialog me={me} people={addable} preselect={recommend === 'pick' ? null : recommend}
+    {recommend && <RecommendDialog me={me} people={recommendable} preselect={recommend === 'pick' ? null : recommend}
                                    onClose={() => setRecommend(null)} onDone={done} />}
-    {proposing && <SalaryDialog me={me} isDirector={false} people={[]} person={proposing.person || null}
-                                preset={proposing.preset ? { ...proposing.preset, by: 'you' } : null}
-                                onClose={() => setProposing(null)} onDone={done} />}
+    {setting && <SalaryDialog me={me} people={setting.pick ? notOnPayroll : []} person={setting.person || null}
+                              preset={setting.preset || null} onClose={() => setSetting(null)} onDone={done} />}
+    {declining && <DeclineDialog me={me} rec={declining} onClose={() => setDeclining(null)} onDone={done} />}
+    {rejecting && <RejectDialog me={me} row={rejecting} onClose={() => setRejecting(null)} onDone={done} />}
   </>);
 }
 

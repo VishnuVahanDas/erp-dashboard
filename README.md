@@ -149,11 +149,11 @@ browser from the threads the tab already loads; there is no extra API.
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET / POST | `/api/payroll/salaries` | director, manager | salary rows with `status` (managers: their reportees) / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds a row → `status` approved (director) or pending (manager) |
-| POST | `/api/payroll/salaries/{id}/approve`, `/reject` | director | `{note}` (required to reject); pending proposals only, first decision wins |
+| GET / POST | `/api/payroll/salaries` | director, manager | salary rows with `status` (managers: their reportees) / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds an approved row — directors for anyone, managers for their reportees, never yourself |
+| POST | `/api/payroll/salaries/{id}/approve`, `/reject` | director, the person's manager | `{note}` (required to reject); pending proposals only, first decision wins |
 | GET  | `/api/payroll/recommendations` | director, manager | recommendations (managers: their reportees) with `status` pending/accepted/declined |
 | POST | `/api/payroll/recommendations` | manager (reportees only) | `{accountId, startDate?, note?}` — put someone on payroll without an amount |
-| POST | `/api/payroll/recommendations/{id}/decline` | director | `{note}` required |
+| POST | `/api/payroll/recommendations/{id}/decline` | director, the person's manager | `{note}` required |
 | GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
 | POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
 | GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
@@ -174,15 +174,17 @@ rounded up to the next half hour. Sundays and holidays are paid. While a month
 is running, only days up to yesterday count. Someone whose first salary row
 starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
-managers can propose a salary or a change for their reportees, which counts
-only once a director approves it (one waiting proposal per person); or
-recommend a reportee who isn't on payroll yet without naming an amount — a
-director accepts by setting the salary (which closes the recommendation) or
-declines with a reason;
-managers open Payroll on **My team**, which lists every reportee with their
-payroll status (on payroll / waiting for a director / not on payroll) and an
-**Add to payroll** button per person;
-a finalized month can't change. Each line stores its day-by-day breakdown as
+a finalized month can't change.
+
+**Who sets pay:** a director for anyone, or a manager for their own reportees
+(never for themselves). A salary saved by either applies at once and closes
+open requests for that person (a pending recommendation is accepted, a waiting
+proposal is marked replaced). A manager can also **recommend** a reportee who
+isn't on payroll without naming an amount; a director or another of that
+person's managers accepts it by setting the salary, or declines it with a
+reason. Managers open Payroll on **My team**: every reportee with their payroll
+status, **Add reportee to payroll** / **Set salary** / **Change**, and the
+requests waiting for them. Directors still see and decide everything. Each line stores its day-by-day breakdown as
 generated, so a payslip doesn't change if punches are re-synced later.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
 the browser); directors can export a month as CSV for the bank or accountant.
