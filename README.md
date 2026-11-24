@@ -110,7 +110,8 @@ directors and old pending/rejected sign-ups become `disabled`.
 | GET  | `/api/leave/all` | director | everyone's `requests`, `usage` and `quotas` |
 | GET / PUT | `/api/leave/quotas` | signed in / director | `{personal, sick}` days per calendar year |
 
-**Leave (LTS):** Sundays inside a range don't count; a half-day is 0.5. A
+**Leave (LTS):** Sundays and company holidays (the list a director keeps in
+Payroll → Holidays, also shown on the leave calendar) inside a range don't count; a half-day is 0.5. A
 **late arrival** or **early departure** is 0.5–4 hours of one date in
 half-hour steps, counted as hours ÷ 8 of a day. Every partial request (half-day,
 late, early) is a single date. Late and first half take the morning, early and

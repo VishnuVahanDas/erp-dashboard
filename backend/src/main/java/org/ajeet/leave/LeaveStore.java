@@ -14,9 +14,11 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Leave tracking: requests, approvals and yearly quotas.
@@ -197,8 +199,8 @@ public class LeaveStore {
         if (reason.length() > MAX_REASON)
             throw new IllegalArgumentException("reason is too long (max " + MAX_REASON + " characters)");
 
-        double days = countDays(from, to, half, hours);
-        if (days <= 0) throw new IllegalArgumentException("those dates are all Sundays - no leave needed");
+        double days = countDays(from, to, half, hours, holidays(from, to));
+        if (days <= 0) throw new IllegalArgumentException("those dates are all Sundays or holidays - no leave needed");
 
         String clash = overlap(who.id(), from, to, half);
         if (clash != null) throw new IllegalArgumentException(clash);
@@ -337,19 +339,45 @@ public class LeaveStore {
     }
 
     /**
-     * Days in [from, to] excluding Sundays; a half-day is 0.5 and late/early is
-     * hours / 8 (both 0 on a Sunday).
+     * Days in [from, to] excluding Sundays and company holidays; a half-day is
+     * 0.5 and late/early is hours / 8 (both 0 on a Sunday or holiday).
      */
-    static double countDays(LocalDate from, LocalDate to, String half, double hours) {
+    static double countDays(LocalDate from, LocalDate to, String half, double hours, Set<LocalDate> holidays) {
         int n = 0;
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
-            if (d.getDayOfWeek() != DayOfWeek.SUNDAY) n++;
+            if (d.getDayOfWeek() != DayOfWeek.SUNDAY && !holidays.contains(d)) n++;
         }
         if (half.isEmpty()) return n;
         return isShort(half) ? n * hours / HOURS_PER_DAY : n * 0.5;
     }
 
     static boolean isShort(String half) { return half.equals("late") || half.equals("early"); }
+
+    /**
+     * Company holidays in [from, to]. They live in payroll_holidays (one list
+     * for leave, attendance and payroll, managed in Payroll); the table may not
+     * exist yet on a brand-new database, so check first.
+     */
+    private Set<LocalDate> holidays(LocalDate from, LocalDate to) throws IOException {
+        Set<LocalDate> out = new HashSet<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT to_regclass('payroll_holidays') IS NOT NULL")) {
+            rs.next();
+            if (!rs.getBoolean(1)) return out;
+        } catch (SQLException e) {
+            throw new IOException("holiday check failed: " + e.getMessage(), e);
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT day FROM payroll_holidays WHERE day BETWEEN ? AND ?")) {
+            ps.setDate(1, Date.valueOf(from));
+            ps.setDate(2, Date.valueOf(to));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(rs.getDate(1).toLocalDate());
+            }
+        } catch (SQLException e) {
+            throw new IOException("holiday query failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
 
     /** Which part of the day a partial request takes: first/late = morning, second/early = evening. */
     private static String slot(String half) {

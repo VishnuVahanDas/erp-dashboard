@@ -622,6 +622,12 @@ tbody tr:last-child td { border-bottom: none; }
 .sw.pending { border: 1.5px dashed var(--cyan); }
 .sw.half { background: linear-gradient(135deg, rgba(var(--cyan-rgb), 0.45) 50%, transparent 50%); border-color: var(--cyan); }
 .sw.sun { background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(var(--tint-rgb), 0.12) 3px 5px); }
+.sw.holiday { background: rgba(var(--blue-rgb), 0.18); border-color: rgba(var(--blue-rgb), 0.5); }
+.cal-day.holiday { background: rgba(var(--blue-rgb), 0.1); border-color: rgba(var(--blue-rgb), 0.35); }
+.cal-day.holiday > em.hol { font-size: 9px; font-weight: 600; color: var(--blue); align-self: stretch; text-align: right; overflow: hidden; white-space: nowrap; }
+.hol-next { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.hol-next .icon { color: var(--blue); }
+.hol-next b { color: var(--text); }
 
 /* apply form */
 .cat-picks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
