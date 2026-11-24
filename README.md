@@ -21,6 +21,7 @@ web-dashboard/
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
 │       ├── leave/LeaveStore.java           leave requests, approvals, yearly quotas (LTS)
 │       ├── mbo/MboStore.java               MBO discussions: propose / acknowledge / deny / suggest
+│       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
@@ -146,6 +147,32 @@ raised themselves, average reply time and anything waiting on them, plus "Most
 agreed", "Most initiative" and "Quickest replies" badges. It is computed in the
 browser from the threads the tab already loads; there is no extra API.
 
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET / POST | `/api/payroll/salaries` | director | history of salary rows / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds a row |
+| GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
+| POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
+| GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
+| GET  | `/api/payroll/runs/{yyyy-MM}` | director, manager | lines; managers get their reportees, finalized/paid months only |
+| GET  | `/api/payroll/runs/{yyyy-MM}/{accountId}/days` | director, the employee, their manager | day-by-day breakdown (finalized months for non-directors) |
+| POST | `/api/payroll/runs/{yyyy-MM}/generate` | director | (re)builds a draft month; corrections are kept |
+| POST | `/api/payroll/runs/{yyyy-MM}/{accountId}/correction` | director | `{hours, note}` ± missed hours, draft only; note required |
+| POST | `/api/payroll/runs/{yyyy-MM}/finalize`, `/paid` | director | draft → finalized (locked) → paid `{paidOn?}` |
+| GET  | `/api/payroll/my` | signed in | own finalized/paid payslips |
+
+**Payroll:** fixed monthly salary (basic + HRA + other allowance), cut only for
+hours missed. Day rate = gross ÷ days in that month (28–31); hour rate = day
+rate ÷ 8. Every Mon–Sat that isn't a holiday needs a 9 h first-to-last punch
+span (1 h lunch inside). Approved leave lowers it: full day → not counted,
+half-day → 4 h, late/early of X h → 9 − X h. Missed time per day is capped at
+8 h (an absent day costs one day's pay); up to 10 minutes is forgiven, more is
+rounded up to the next half hour. Sundays and holidays are paid. While a month
+is running, only days up to yesterday count. Someone whose first salary row
+starts mid-month is paid from that date. The director can add a ± hours
+correction with a note (forgotten punch, unlinked account) before finalizing;
+a finalized month can't change. Each line stores its day-by-day breakdown as
+generated, so a payslip doesn't change if punches are re-synced later.
+
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
 
@@ -163,6 +190,7 @@ can start first. If you change one, change the other repo too.
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
 | `leave_requests`, `leave_quotas` | dashboard | dashboard |
 | `mbo_threads`, `mbo_entries` | dashboard | dashboard |
+| `payroll_salaries`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
 
 ## Local dev with production data
 

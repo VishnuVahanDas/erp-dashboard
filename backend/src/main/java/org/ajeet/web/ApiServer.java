@@ -9,6 +9,7 @@ import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
+import org.ajeet.payroll.PayrollStore;
 import org.ajeet.sync.SyncRequests;
 
 import java.io.IOException;
@@ -37,13 +38,16 @@ public class ApiServer {
     private final SyncRequests sync;
     private final LeaveStore leave;
     private final MboStore mbo;
+    private final PayrollStore payroll;
 
-    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave, MboStore mbo) {
+    public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave, MboStore mbo,
+                     PayrollStore payroll) {
         this.attendance = attendance;
         this.auth = auth;
         this.sync = sync;
         this.leave = leave;
         this.mbo = mbo;
+        this.payroll = payroll;
     }
 
     /** How long POST /api/sync waits for the agent before answering 202. */
@@ -222,12 +226,72 @@ public class ApiServer {
                 String[] parts = path.split("/");
                 mbo.respond(acct, Long.parseLong(parts[2]), parts[3], readJson(ex).path("body").asText(""));
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
+            // ---- payroll: directors run it; managers read reportees' locked months; everyone their payslips
+            } else if (method.equals("GET") && path.equals("/payroll/salaries")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                send(ex, 200, mapper.createObjectNode().set("salaries", mapper.valueToTree(payroll.salaries())));
+            } else if (method.equals("POST") && path.equals("/payroll/salaries")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                JsonNode b = readJson(ex);
+                long id = payroll.addSalary(acct, new PayrollStore.SalaryInput(b.path("accountId").asLong(0),
+                        number(b, "basic"), number(b, "hra"), number(b, "otherAllowance"),
+                        b.path("effectiveFrom").asText("")));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+            } else if (method.equals("GET") && path.equals("/payroll/holidays")) {
+                requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("holidays", mapper.valueToTree(payroll.holidays())));
+            } else if (method.equals("POST") && path.equals("/payroll/holidays")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                JsonNode b = readJson(ex);
+                payroll.addHoliday(b.path("day").asText(""), b.path("name").asText(""));
+                send(ex, 200, mapper.createObjectNode().set("holidays", mapper.valueToTree(payroll.holidays())));
+            } else if (method.equals("DELETE") && path.matches("/payroll/holidays/\\d{4}-\\d{2}-\\d{2}")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                payroll.removeHoliday(path.substring("/payroll/holidays/".length()));
+                send(ex, 200, mapper.createObjectNode().set("holidays", mapper.valueToTree(payroll.holidays())));
+            } else if (method.equals("GET") && path.equals("/payroll/runs")) {
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("runs",
+                        mapper.valueToTree(payroll.runs(!acct.has(AuthStore.DIRECTOR)))));
+            } else if (method.equals("GET") && path.matches("/payroll/runs/\\d{4}-\\d{2}")) {
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                java.time.YearMonth ym = PayrollStore.month(path.substring("/payroll/runs/".length()));
+                send(ex, 200, mapper.createObjectNode().set("lines", mapper.valueToTree(acct.has(AuthStore.DIRECTOR)
+                        ? payroll.lines(ym) : payroll.teamLines(acct.id(), ym))));
+            } else if (method.equals("GET") && path.matches("/payroll/runs/\\d{4}-\\d{2}/\\d+/days")) {
+                AuthStore.Account acct = requireAccount(ex);
+                String[] parts = path.split("/");
+                send(ex, 200, mapper.createObjectNode().set("days", mapper.valueToTree(
+                        payroll.days(acct, PayrollStore.month(parts[3]), Long.parseLong(parts[4])))));
+            } else if (method.equals("POST") && path.matches("/payroll/runs/\\d{4}-\\d{2}/(generate|finalize|paid)")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                String[] parts = path.split("/");
+                java.time.YearMonth ym = PayrollStore.month(parts[3]);
+                JsonNode b = readJson(ex);
+                ObjectNode out = mapper.createObjectNode().put("ok", true);
+                switch (parts[4]) {
+                    case "generate" -> out.put("people", payroll.generate(ym));
+                    case "finalize" -> payroll.finalizeRun(acct, ym);
+                    default -> payroll.markPaid(ym, b.path("paidOn").asText(""));
+                }
+                send(ex, 200, out);
+            } else if (method.equals("POST") && path.matches("/payroll/runs/\\d{4}-\\d{2}/\\d+/correction")) {
+                requireRole(ex, AuthStore.DIRECTOR);
+                String[] parts = path.split("/");
+                JsonNode b = readJson(ex);
+                payroll.correct(PayrollStore.month(parts[3]), Long.parseLong(parts[4]),
+                        number(b, "hours"), b.path("note").asText(""));
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
+            } else if (method.equals("GET") && path.equals("/payroll/my")) {
+                AuthStore.Account acct = requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("payslips", mapper.valueToTree(payroll.myLines(acct.id()))));
             } else {
                 send(ex, 404, mapper.createObjectNode().put("error", "not found"));
             }
         } catch (AuthStore.AuthException e) {
             send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
-        } catch (ForbiddenException | LeaveStore.ForbiddenException | MboStore.ForbiddenException e) {
+        } catch (ForbiddenException | LeaveStore.ForbiddenException | MboStore.ForbiddenException
+                 | PayrollStore.ForbiddenException e) {
             send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             send(ex, 400, mapper.createObjectNode().put("error", e.getMessage()));
@@ -345,6 +409,18 @@ public class ApiServer {
                 roles,
                 b.has("status") ? b.path("status").asText() : null,
                 lines);
+    }
+
+    /** A numeric body field; missing = 0, anything non-numeric answers 400. */
+    private static double number(JsonNode b, String field) {
+        JsonNode v = b.get(field);
+        if (v == null || v.isNull() || (v.isTextual() && v.asText().isBlank())) return 0;
+        if (v.isNumber()) return v.asDouble();
+        try {
+            return Double.parseDouble(v.asText().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(field + " must be a number");
+        }
     }
 
     private JsonNode readJson(HttpExchange ex) throws IOException {

@@ -5,6 +5,7 @@ import org.ajeet.auth.AuthStore;
 import org.ajeet.config.Env;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
+import org.ajeet.payroll.PayrollStore;
 import org.ajeet.sync.SyncRequests;
 import org.ajeet.web.ApiServer;
 
@@ -35,6 +36,8 @@ public class Main {
         // after AuthStore: leave_requests references accounts
         LeaveStore leave = new LeaveStore(pgUrl, pgUser, pgPass);
         MboStore mbo = new MboStore(pgUrl, pgUser, pgPass);
-        new ApiServer(attendance, auth, sync, leave, mbo).start(port);
+        // after LeaveStore: payroll reads leave_requests and punches
+        PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
+        new ApiServer(attendance, auth, sync, leave, mbo, payroll).start(port);
     }
 }

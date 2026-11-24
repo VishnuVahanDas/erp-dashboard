@@ -20,6 +20,7 @@ backend/   Java 24, Maven wrapper, no framework
     sync/SyncRequests.java       "Sync device" queue + agent heartbeat
     leave/LeaveStore.java        leave requests, approvals, yearly quotas (LTS)
     mbo/MboStore.java            MBO threads and entries
+    payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
     config/Env.java              env var / .env lookup
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views
