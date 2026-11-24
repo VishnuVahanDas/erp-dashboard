@@ -430,6 +430,69 @@ function QuotaDialog({ me, onClose, onDone }) {
 }
 
 /**
+ * Compact leave panel for the director's Dashboard: the pending queue with the
+ * same Approve / Reject actions as the Leave tab, who's away, and shortcuts.
+ * The full Leave tab (OpsLeave) is unchanged.
+ */
+export function DashboardLeave({ me, requests, reload, onOpenAll }) {
+  const [deciding, setDeciding] = useState(null); // { req, approve }
+  const [quotas, setQuotas] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [error, setError] = useState(null);
+  const SHOW = 4;
+
+  const flash = (m) => { setNotice(m); setTimeout(() => setNotice(null), 5000); };
+  const today = todayStr();
+  const pending = requests.filter((r) => r.status === 'pending' && r.accountId !== me.id)
+    .sort((a, b) => a.from.localeCompare(b.from));
+  const away = isSunday(today) ? [] : onLeave(requests, today).filter((r) => r.status === 'approved');
+  const awayNames = [...new Set(away.map((r) => r.name.split(' ')[0]))];
+  const upcoming = requests.filter((r) => r.status === 'approved' && r.from > today).length;
+
+  return (
+    <section className="panel">
+      <Toasts notice={notice} error={error} onClose={() => setError(null)} />
+      <div className="panel-head">
+        <h3>Leave</h3>
+        <div className="leave-act">
+          <button className="btn ghost small" onClick={() => setQuotas(true)}><Icon name="edit" size={15} />Leave quotas</button>
+          <button className="btn ghost small" onClick={onOpenAll}><Icon name="calendar" size={15} />All leave requests →</button>
+        </div>
+      </div>
+
+      <div className="dash-leave-facts">
+        <span className={pending.length ? 'warn' : ''}><b>{pending.length}</b> awaiting decision</span>
+        <span><b>{awayNames.length}</b> on leave today{awayNames.length ? `: ${awayNames.join(', ')}` : ''}</span>
+        <span><b>{upcoming}</b> upcoming approved</span>
+      </div>
+
+      {pending.length === 0 ? <Empty title="No pending leave" hint="New leave requests will appear here." /> : (<>
+        <div className="leave-cards">
+          {pending.slice(0, SHOW).map((r) => (
+            <div key={r.id} className="leave-card">
+              <div className="who"><Avatar label={r.name} /><span>{r.name}<small>applied {fmtStamp(r.appliedAt)}</small></span></div>
+              <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtDays(r.days)}</span></div>
+              <p title={r.reason}>{r.reason}</p>
+              <div className="leave-act">
+                <button className="btn danger small" onClick={() => setDeciding({ req: r, approve: false })}>Reject</button>
+                <button className="btn primary small" onClick={() => setDeciding({ req: r, approve: true })}><Icon name="approve" size={15} />Approve</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {pending.length > SHOW && (
+          <button className="link dash-leave-more" onClick={onOpenAll}>+{pending.length - SHOW} more waiting — open Leave requests →</button>
+        )}
+      </>)}
+
+      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} onClose={() => setDeciding(null)}
+                                 onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
+      {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
+    </section>
+  );
+}
+
+/**
  * Manager/director "Leave" tab. requests are the reportees' (manager) or
  * everyone's (director); the parent loads them so the nav can show a count.
  */

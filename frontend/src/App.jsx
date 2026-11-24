@@ -3,7 +3,7 @@ import {
   Avatar, DroneMark, Empty, Icon, Modal, Stat, Toasts, call, dayOf, fmtDuration, greeting, groupByDay, hhmm,
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
-import { EmployeeLeave, OpsLeave } from './leave.jsx';
+import { DashboardLeave, EmployeeLeave, OpsLeave } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
@@ -779,6 +779,8 @@ function OpsView({ me, ctx, scope }) {
           <Stat label={isDirector ? 'People' : 'Reportees'} value={headcount} icon="team"
                 foot={<button className="link" onClick={() => setTab('people')}>{isDirector ? 'Manage people →' : 'View team →'}</button>} />
         </div>
+
+        {isDirector && <DashboardLeave me={me} requests={leaves} reload={loadLeave} onOpenAll={() => setTab('leave')} />}
 
         <div className="grid-2 wide-left">
           <section className="panel">

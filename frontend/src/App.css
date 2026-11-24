@@ -657,6 +657,12 @@ tbody tr:last-child td { border-bottom: none; }
 .leave-card.flat p { -webkit-line-clamp: unset; white-space: pre-wrap; }
 .leave-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 
+.dash-leave-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: -4px 0 16px; font-size: 13px; color: var(--muted); }
+.dash-leave-facts b { color: var(--text); font-family: var(--mono); margin-right: 4px; }
+.dash-leave-facts .warn b { color: var(--saffron); }
+.dash-leave-more { margin-top: 12px; }
+.panel-head .leave-act { margin-top: 0; flex-wrap: wrap; }
+
 @media (max-width: 560px) {
   .cal-grid { gap: 3px; }
   .cal-day { aspect-ratio: 1; min-height: 0; padding: 4px; border-radius: 7px; }
