@@ -21,8 +21,10 @@ import java.util.Map;
 /**
  * Leave tracking: requests, approvals and yearly quotas.
  *
- * An employee applies for personal or sick leave over a date range (or half
- * of a single day). Sundays inside the range don't count. Any of the
+ * An employee applies for personal or sick leave over a date range, half of
+ * a single day, or a few hours of one (late arrival / early departure, 0.5-4 h
+ * in half-hour steps, counted as hours / 8 of a day). Sundays inside the
+ * range don't count. Any of the
  * employee's reporting managers, or any director, may approve or reject; the
  * first decision wins. Nobody decides their own request.
  *
@@ -38,6 +40,10 @@ public class LeaveStore {
     public static final List<String> CATEGORIES = List.of("personal", "sick");
     private static final Map<String, Double> DEFAULT_QUOTAS = Map.of("personal", 12.0, "sick", 6.0);
     private static final int MAX_REASON = 1000;
+    /** halfDay values: "" = full day(s); first/second = half-day; late/early = some hours. */
+    public static final List<String> PARTS = List.of("", "first", "second", "late", "early");
+    private static final double HOURS_PER_DAY = 8.0;
+    private static final double MAX_SHORT_HOURS = 4.0;
 
     private final Connection conn;
 
@@ -48,15 +54,15 @@ public class LeaveStore {
 
     /** One request as the portal shows it. Timestamps are epoch millis (browser formats them). */
     public record LeaveRequest(long id, long accountId, String name, String email, String category,
-                               String from, String to, String halfDay, double days, String reason,
+                               String from, String to, String halfDay, double hours, double days, String reason,
                                String status, long appliedAt, Long decidedAt, String decidedBy,
                                String note, Long cancelledAt, String cancelledBy) {}
 
     /** Days for one category in one year. remaining = quota - used - pending. */
     public record Balance(String category, double quota, double used, double pending, double remaining) {}
 
-    /** What the employee submits. halfDay is "", "first" or "second". */
-    public record LeaveInput(String category, String from, String to, String halfDay, String reason) {}
+    /** What the employee submits. halfDay is one of PARTS; hours only for late/early. */
+    public record LeaveInput(String category, String from, String to, String halfDay, Double hours, String reason) {}
 
     public LeaveStore(String url, String user, String password) throws IOException {
         try {
@@ -83,6 +89,7 @@ public class LeaveStore {
                             CHECK (to_date >= from_date)
                         )""");
                 st.execute("CREATE INDEX IF NOT EXISTS leave_requests_account ON leave_requests (account_id, from_date)");
+                migrateShortLeave(st);
                 st.execute("""
                         CREATE TABLE IF NOT EXISTS leave_quotas (
                             category      TEXT PRIMARY KEY CHECK (category IN ('personal','sick')),
@@ -160,17 +167,22 @@ public class LeaveStore {
         if (from.getYear() != to.getYear())
             throw new IllegalArgumentException("leave can't cross into a new year - file one request per year");
         String half = in.halfDay() == null ? "" : in.halfDay().trim().toLowerCase();
-        if (!half.isEmpty()) {
-            if (!half.equals("first") && !half.equals("second"))
-                throw new IllegalArgumentException("halfDay must be first or second");
-            if (!from.equals(to)) throw new IllegalArgumentException("a half-day must be a single date");
+        if (!PARTS.contains(half))
+            throw new IllegalArgumentException("halfDay must be first, second, late or early");
+        if (!half.isEmpty() && !from.equals(to))
+            throw new IllegalArgumentException("a half-day, late arrival or early departure must be a single date");
+        double hours = 0;
+        if (isShort(half)) {
+            hours = in.hours() == null ? 0 : in.hours();
+            if (hours < 0.5 || hours > MAX_SHORT_HOURS || hours * 2 != Math.floor(hours * 2))
+                throw new IllegalArgumentException("hours must be 0.5 to 4 in half-hour steps");
         }
         String reason = in.reason() == null ? "" : in.reason().trim();
         if (reason.isEmpty()) throw new IllegalArgumentException("please give a reason");
         if (reason.length() > MAX_REASON)
             throw new IllegalArgumentException("reason is too long (max " + MAX_REASON + " characters)");
 
-        double days = countDays(from, to, half);
+        double days = countDays(from, to, half, hours);
         if (days <= 0) throw new IllegalArgumentException("those dates are all Sundays - no leave needed");
 
         String clash = overlap(who.id(), from, to, half);
@@ -185,15 +197,16 @@ public class LeaveStore {
                     category, fmt(days), fmt(Math.max(0, quota - booked)), fmt(quota), from.getYear()));
 
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO leave_requests (account_id, category, from_date, to_date, half_day, days, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""")) {
+                INSERT INTO leave_requests (account_id, category, from_date, to_date, half_day, hours, days, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""")) {
             ps.setLong(1, who.id());
             ps.setString(2, category);
             ps.setDate(3, Date.valueOf(from));
             ps.setDate(4, Date.valueOf(to));
             ps.setString(5, half);
-            ps.setDouble(6, days);
-            ps.setString(7, reason);
+            ps.setDouble(6, hours);
+            ps.setDouble(7, days);
+            ps.setString(8, reason);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getLong(1);
@@ -286,13 +299,50 @@ public class LeaveStore {
 
     // --------------------------------------------------------------- helpers
 
-    /** Days in [from, to] excluding Sundays; a half-day is 0.5 (unless it's a Sunday). */
-    static double countDays(LocalDate from, LocalDate to, String half) {
+    /**
+     * Days in [from, to] excluding Sundays; a half-day is 0.5 and late/early is
+     * hours / 8 (both 0 on a Sunday).
+     */
+    static double countDays(LocalDate from, LocalDate to, String half, double hours) {
         int n = 0;
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
             if (d.getDayOfWeek() != DayOfWeek.SUNDAY) n++;
         }
-        return half.isEmpty() ? n : n * 0.5;
+        if (half.isEmpty()) return n;
+        return isShort(half) ? n * hours / HOURS_PER_DAY : n * 0.5;
+    }
+
+    static boolean isShort(String half) { return half.equals("late") || half.equals("early"); }
+
+    /** Which part of the day a partial request takes: first/late = morning, second/early = evening. */
+    private static String slot(String half) {
+        return half.equals("first") || half.equals("late") ? "am" : "pm";
+    }
+
+    /** Adds hours + late/early to an existing leave_requests table; each step runs only once. */
+    private void migrateShortLeave(Statement st) throws SQLException {
+        st.execute("ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS hours NUMERIC(3,1) NOT NULL DEFAULT 0");
+        try (ResultSet rs = st.executeQuery("""
+                SELECT numeric_scale FROM information_schema.columns
+                WHERE table_name = 'leave_requests' AND column_name = 'days'""")) {
+            // 0.5 h = 0.0625 day needs 4 decimals (was NUMERIC(5,1))
+            if (rs.next() && rs.getInt(1) < 4) {
+                rs.close();
+                st.execute("ALTER TABLE leave_requests ALTER COLUMN days TYPE NUMERIC(8,4)");
+            }
+        }
+        try (ResultSet rs = st.executeQuery("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conrelid = 'leave_requests'::regclass AND conname = 'leave_requests_half_day_check'""")) {
+            boolean current = rs.next() && rs.getString(1).contains("late");
+            rs.close();
+            if (!current) {
+                st.execute("ALTER TABLE leave_requests DROP CONSTRAINT IF EXISTS leave_requests_half_day_check");
+                st.execute("""
+                        ALTER TABLE leave_requests ADD CONSTRAINT leave_requests_half_day_check
+                        CHECK (half_day IN ('','first','second','late','early'))""");
+            }
+        }
     }
 
     private boolean canManage(AuthStore.Account who, long employeeId) throws IOException {
@@ -322,8 +372,8 @@ public class LeaveStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String otherHalf = rs.getString(3);
-                    // the other half of the same day is fine
-                    if (!half.isEmpty() && !otherHalf.isEmpty() && !half.equals(otherHalf)) continue;
+                    // partial requests in different parts of the day are fine (morning vs evening)
+                    if (!half.isEmpty() && !otherHalf.isEmpty() && !slot(half).equals(slot(otherHalf))) continue;
                     String range = rs.getDate(1).equals(rs.getDate(2))
                             ? rs.getDate(1).toString() : rs.getDate(1) + " to " + rs.getDate(2);
                     return "overlaps your " + rs.getString(4) + " leave on " + range;
@@ -374,7 +424,7 @@ public class LeaveStore {
         List<LeaveRequest> out = new ArrayList<>();
         String sql = """
                 SELECT r.id, r.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
-                       r.category, r.from_date::text, r.to_date::text, r.half_day, r.days, r.reason,
+                       r.category, r.from_date::text, r.to_date::text, r.half_day, r.hours, r.days, r.reason,
                        r.status,
                        (EXTRACT(EPOCH FROM r.applied_at) * 1000)::bigint,
                        (EXTRACT(EPOCH FROM r.decided_at) * 1000)::bigint,
@@ -392,9 +442,9 @@ public class LeaveStore {
                 while (rs.next()) {
                     out.add(new LeaveRequest(rs.getLong(1), rs.getLong(2), rs.getString(3), rs.getString(4),
                             rs.getString(5), rs.getString(6), rs.getString(7), rs.getString(8),
-                            rs.getDouble(9), rs.getString(10), rs.getString(11), rs.getLong(12),
-                            (Long) rs.getObject(13), rs.getString(14), rs.getString(15),
-                            (Long) rs.getObject(16), rs.getString(17)));
+                            rs.getDouble(9), rs.getDouble(10), rs.getString(11), rs.getString(12),
+                            rs.getLong(13), (Long) rs.getObject(14), rs.getString(15), rs.getString(16),
+                            (Long) rs.getObject(17), rs.getString(18)));
                 }
             }
         } catch (SQLException e) {

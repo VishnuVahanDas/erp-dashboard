@@ -8,7 +8,14 @@ const CATS = {
   sick: { label: 'Sick', short: 'S' },
 };
 const STATUS_PILL = { approved: 'live', pending: 'warn', rejected: 'bad', cancelled: 'idle' };
-const HALF = { first: 'First half', second: 'Second half' };
+const HALF = { first: 'First half', second: 'Second half', late: 'Late arrival', early: 'Early departure' };
+/** Late arrival / early departure: a few hours of one day, counted as hours / 8. */
+const isShort = (h) => h === 'late' || h === 'early';
+const HOURS_PER_DAY = 8;
+const HOUR_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+const fmtHours = (h) => `${h} h`;
+/** Up to 2 decimals, no trailing zeros (0.3125 -> 0.31, 11.5 -> 11.5). */
+const num = (n) => Math.round(n * 100) / 100;
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /* ------------------------------------------------------------- helpers */
@@ -19,15 +26,18 @@ const iso = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
 const isSunday = (s) => parse(s).getUTCDay() === 0;
 
-/** Mirrors the backend: Sundays don't count, a half-day is 0.5. */
-export function countDays(from, to, half) {
+/** Mirrors the backend: Sundays don't count, a half-day is 0.5, late/early is hours / 8. */
+export function countDays(from, to, half, hours = 0) {
   if (!from || !to || to < from) return 0;
   let n = 0;
   for (let d = from; d <= to; d = addDays(d, 1)) if (!isSunday(d)) n++;
-  return half ? n * 0.5 : n;
+  if (!half) return n;
+  return isShort(half) ? (n * hours) / HOURS_PER_DAY : n * 0.5;
 }
 
-const fmtDays = (n) => `${n} day${n === 1 ? '' : 's'}`;
+const fmtDays = (n) => `${num(n)} day${num(n) === 1 ? '' : 's'}`;
+/** How much a request takes: hours for late/early, days otherwise. */
+const fmtAmount = (r) => (isShort(r.halfDay) ? `${fmtHours(r.hours)} (${fmtDays(r.days)})` : fmtDays(r.days));
 const fmtDate = (s) => parse(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtShort = (s) => parse(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' });
 const fmtStamp = (ms) => ms ? new Date(ms).toLocaleString('en-GB', {
@@ -35,7 +45,7 @@ const fmtStamp = (ms) => ms ? new Date(ms).toLocaleString('en-GB', {
 }) : null;
 
 function range(r) {
-  if (r.from === r.to) return `${fmtDate(r.from)}${r.halfDay ? ` · ${HALF[r.halfDay]}` : ''}`;
+  if (r.from === r.to) return `${fmtDate(r.from)}${r.halfDay ? ` · ${HALF[r.halfDay]}${isShort(r.halfDay) ? ` ${fmtHours(r.hours)}` : ''}` : ''}`;
   const sameYear = r.from.slice(0, 4) === r.to.slice(0, 4);
   return `${sameYear ? fmtShort(r.from) : fmtDate(r.from)} – ${fmtDate(r.to)}`;
 }
@@ -79,7 +89,7 @@ function LeaveCalendar({ requests }) {
   const title = parse(first).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   const monthDays = Object.entries(byDay)
     .filter(([d, r]) => d.startsWith(month) && r.status === 'approved' && !isSunday(d))
-    .reduce((s, [, r]) => s + (r.halfDay ? 0.5 : 1), 0);
+    .reduce((s, [, r]) => s + (r.halfDay ? r.days : 1), 0);
 
   return (
     <div className="cal">
@@ -98,12 +108,12 @@ function LeaveCalendar({ requests }) {
           const cls = ['cal-day', sun && 'sun', d === today && 'today',
             r && !sun && `leave ${r.category} ${r.status}`, r?.halfDay && 'half'].filter(Boolean).join(' ');
           const tip = r && !sun
-            ? `${CATS[r.category].label} leave · ${r.status}${r.halfDay ? ` · ${HALF[r.halfDay]}` : ''}\n${r.reason}`
+            ? `${CATS[r.category].label} leave · ${r.status}${r.halfDay ? ` · ${HALF[r.halfDay]}${isShort(r.halfDay) ? ` ${fmtHours(r.hours)}` : ''}` : ''}\n${r.reason}`
             : sun ? 'Sunday' : undefined;
           return (
             <div key={d} className={cls} title={tip}>
               <span>{+d.slice(8)}</span>
-              {r && !sun && <em>{CATS[r.category].short}{r.halfDay ? '½' : ''}</em>}
+              {r && !sun && <em>{CATS[r.category].short}{isShort(r.halfDay) ? ` ${r.hours}h` : r.halfDay ? '½' : ''}</em>}
             </div>
           );
         })}
@@ -112,7 +122,7 @@ function LeaveCalendar({ requests }) {
         <span><i className="sw personal approved" />Personal</span>
         <span><i className="sw sick approved" />Sick</span>
         <span><i className="sw personal pending" />Pending</span>
-        <span><i className="sw half" />Half-day</span>
+        <span><i className="sw half" />Half-day / hours</span>
         <span><i className="sw sun" />Sunday (not counted)</span>
       </div>
     </div>
@@ -124,15 +134,18 @@ function LeaveCalendar({ requests }) {
 function LeaveForm({ me, balance, onClose, onSaved }) {
   const [category, setCategory] = useState('personal');
   const [from, setFrom] = useState(todayStr());
-  const [to, setTo] = useState(todayStr());
+  const [toDate, setTo] = useState(todayStr());
   const [half, setHalf] = useState('');
+  const [hours, setHours] = useState(1);
   const [reason, setReason] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const single = from && from === to;
-  const halfDay = single ? half : '';
-  const days = countDays(from, to, halfDay);
+  // Full day picks a From–To range; every other duration is one date
+  const halfDay = half;
+  const to = halfDay ? from : toDate;
+  const shortHours = isShort(halfDay) ? hours : 0;
+  const days = countDays(from, to, halfDay, shortHours);
   const left = balance.find((b) => b.category === category)?.remaining ?? 0;
   const crossesYear = from && to && from.slice(0, 4) !== to.slice(0, 4);
   const problem = !from || !to ? null
@@ -146,8 +159,8 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await call('POST', '/api/leave', { category, from, to, halfDay, reason }, me.token);
-      onSaved(`Leave request sent for ${fmtDays(days)}`);
+      await call('POST', '/api/leave', { category, from, to, halfDay, hours: shortHours || null, reason }, me.token);
+      onSaved(`Leave request sent for ${shortHours ? `${HALF[halfDay].toLowerCase()} of ${fmtHours(shortHours)}` : fmtDays(days)}`);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -164,36 +177,53 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
                 <label key={k} className={`cat-pick ${k} ${category === k ? 'on' : ''}`}>
                   <input type="radio" name="category" checked={category === k} onChange={() => setCategory(k)} />
                   <b>{c.label}</b>
-                  <small>{b ? `${b.remaining} of ${b.quota} left` : ''}</small>
+                  <small>{b ? `${num(b.remaining)} of ${b.quota} left` : ''}</small>
                 </label>
               );
             })}
           </div>
         </fieldset>
 
-        <div className="form-grid">
-          <label className="field">
-            <span>From</span>
-            <input type="date" value={from} required
-                   onChange={(e) => { setFrom(e.target.value); if (!to || to < e.target.value) setTo(e.target.value); }} />
-          </label>
-          <label className="field">
-            <span>To</span>
-            <input type="date" value={to} min={from} required onChange={(e) => setTo(e.target.value)} />
-          </label>
-        </div>
+        <fieldset className="field">
+          <span>Duration</span>
+          <div className="role-picks">
+            {[['', 'Full day'], ['first', 'First half'], ['second', 'Second half'],
+              ['late', 'Late arrival'], ['early', 'Early departure']].map(([k, label]) => (
+              <label key={k || 'full'} className={`role-pick ${half === k ? 'on' : ''}`}>
+                <input type="radio" name="half" checked={half === k} onChange={() => setHalf(k)} />{label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-        {single && (
-          <fieldset className="field">
-            <span>Duration</span>
-            <div className="role-picks">
-              {[['', 'Full day'], ['first', 'First half'], ['second', 'Second half']].map(([k, label]) => (
-                <label key={k || 'full'} className={`role-pick ${half === k ? 'on' : ''}`}>
-                  <input type="radio" name="half" checked={half === k} onChange={() => setHalf(k)} />{label}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        {half === '' ? (
+          <div className="form-grid">
+            <label className="field">
+              <span>From</span>
+              <input type="date" value={from} required
+                     onChange={(e) => { setFrom(e.target.value); if (!toDate || toDate < e.target.value) setTo(e.target.value); }} />
+            </label>
+            <label className="field">
+              <span>To</span>
+              <input type="date" value={toDate} min={from} required onChange={(e) => setTo(e.target.value)} />
+            </label>
+          </div>
+        ) : (
+          <label className="field">
+            <span>Date</span>
+            <input type="date" value={from} required
+                   onChange={(e) => { setFrom(e.target.value); if (!toDate || toDate < e.target.value) setTo(e.target.value); }} />
+          </label>
+        )}
+
+        {isShort(half) && (
+          <label className="field">
+            <span>{half === 'late' ? 'How many hours late?' : 'How many hours early?'}</span>
+            <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+              {HOUR_STEPS.map((h) => <option key={h} value={h}>{fmtHours(h)}</option>)}
+            </select>
+            <small className="dim">Counted as {hours} ÷ {HOURS_PER_DAY} = {fmtDays(hours / HOURS_PER_DAY)} of {CATS[category].label.toLowerCase()} leave.</small>
+          </label>
         )}
 
         <label className="field">
@@ -205,7 +235,7 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
         <div className={`leave-sum ${problem ? 'err' : ''}`}>
           <Icon name="calendar" />
           <span>{problem || <>
-            <b>{fmtDays(days)}</b> of {CATS[category].label.toLowerCase()} leave
+            <b>{shortHours ? `${fmtHours(shortHours)} · ${fmtDays(days)}` : fmtDays(days)}</b> of {CATS[category].label.toLowerCase()} leave
             {countDays(from, to, '') < (parse(to) - parse(from)) / 864e5 + 1 ? ' (Sundays skipped)' : ''}
             {' '}· {fmtDays(left - days)} left after this
           </>}</span>
@@ -269,7 +299,7 @@ function LeaveTable({ requests, showName, actions, empty }) {
                 </div>
                 <small className="sub reason" title={r.reason}>{r.reason}</small>
               </td>
-              <td className="mono strong">{r.days}</td>
+              <td className="mono strong">{isShort(r.halfDay) ? <>{fmtHours(r.hours)}<small className="sub">{num(r.days)} day</small></> : num(r.days)}</td>
               <td className="mono dim">{fmtStamp(r.appliedAt)}</td>
               <td><StatusPill r={r} /></td>
               <td><Decision r={r} /></td>
@@ -291,15 +321,25 @@ function BalanceStats({ balance, year }) {
   return (
     <div className="stats">
       {balance.map((b) => (
-        <Stat key={b.category} label={`${CATS[b.category].label} leave left`} value={b.remaining} unit={` / ${b.quota}`}
+        <Stat key={b.category} label={`${CATS[b.category].label} leave left`} value={num(b.remaining)} unit={` / ${b.quota}`}
               accent={b.remaining <= 0 ? 'alert' : b.category === 'personal' ? 'cyan' : 'saffron'} icon={icon[b.category]}
-              foot={`${b.used} taken · ${b.pending} pending · ${year}`} />
+              foot={`${num(b.used)} taken · ${num(b.pending)} pending · ${year}`} />
       ))}
     </div>
   );
 }
 
 /* ------------------------------------------------------------- employee */
+
+/** The Leave tab's two balance tiles, for the employee's "My dashboard". */
+export function LeaveBalance({ me }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    call('GET', '/api/leave/my', null, me.token).then(setData).catch(() => setData(null));
+  }, [me.token]);
+  if (!data?.balance?.length) return null;
+  return <BalanceStats balance={data.balance} year={data.year} />;
+}
 
 /** Employee "Leave" tab: balance, calendar, history, new request. */
 export function EmployeeLeave({ me }) {
@@ -368,7 +408,7 @@ function DecideDialog({ me, req, approve, onClose, onDone }) {
     <Modal title={`${verb} leave`} eyebrow={req.name} onClose={onClose}>
       <form className="person-form" onSubmit={submit}>
         <div className="leave-card flat">
-          <div className="leave-what"><span className={`cat-tag ${req.category}`}>{CATS[req.category].label}</span><b>{range(req)}</b><span className="muted">{fmtDays(req.days)}</span></div>
+          <div className="leave-what"><span className={`cat-tag ${req.category}`}>{CATS[req.category].label}</span><b>{range(req)}</b><span className="muted">{fmtAmount(req)}</span></div>
           <p>{req.reason}</p>
         </div>
         <label className="field">
@@ -430,6 +470,69 @@ function QuotaDialog({ me, onClose, onDone }) {
 }
 
 /**
+ * Compact leave panel for the director's Dashboard: the pending queue with the
+ * same Approve / Reject actions as the Leave tab, who's away, and shortcuts.
+ * The full Leave tab (OpsLeave) is unchanged.
+ */
+export function DashboardLeave({ me, requests, reload, onOpenAll }) {
+  const [deciding, setDeciding] = useState(null); // { req, approve }
+  const [quotas, setQuotas] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [error, setError] = useState(null);
+  const SHOW = 4;
+
+  const flash = (m) => { setNotice(m); setTimeout(() => setNotice(null), 5000); };
+  const today = todayStr();
+  const pending = requests.filter((r) => r.status === 'pending' && r.accountId !== me.id)
+    .sort((a, b) => a.from.localeCompare(b.from));
+  const away = isSunday(today) ? [] : onLeave(requests, today).filter((r) => r.status === 'approved');
+  const awayNames = [...new Set(away.map((r) => r.name.split(' ')[0]))];
+  const upcoming = requests.filter((r) => r.status === 'approved' && r.from > today).length;
+
+  return (
+    <section className="panel">
+      <Toasts notice={notice} error={error} onClose={() => setError(null)} />
+      <div className="panel-head">
+        <h3>Leave</h3>
+        <div className="leave-act">
+          <button className="btn ghost small" onClick={() => setQuotas(true)}><Icon name="edit" size={15} />Leave quotas</button>
+          <button className="btn ghost small" onClick={onOpenAll}><Icon name="calendar" size={15} />All leave requests →</button>
+        </div>
+      </div>
+
+      <div className="dash-leave-facts">
+        <span className={pending.length ? 'warn' : ''}><b>{pending.length}</b> awaiting decision</span>
+        <span><b>{awayNames.length}</b> on leave today{awayNames.length ? `: ${awayNames.join(', ')}` : ''}</span>
+        <span><b>{upcoming}</b> upcoming approved</span>
+      </div>
+
+      {pending.length === 0 ? <Empty title="No pending leave" hint="New leave requests will appear here." /> : (<>
+        <div className="leave-cards">
+          {pending.slice(0, SHOW).map((r) => (
+            <div key={r.id} className="leave-card">
+              <div className="who"><Avatar label={r.name} /><span>{r.name}<small>applied {fmtStamp(r.appliedAt)}</small></span></div>
+              <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtAmount(r)}</span></div>
+              <p title={r.reason}>{r.reason}</p>
+              <div className="leave-act">
+                <button className="btn danger small" onClick={() => setDeciding({ req: r, approve: false })}>Reject</button>
+                <button className="btn primary small" onClick={() => setDeciding({ req: r, approve: true })}><Icon name="approve" size={15} />Approve</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {pending.length > SHOW && (
+          <button className="link dash-leave-more" onClick={onOpenAll}>+{pending.length - SHOW} more waiting — open Leave requests →</button>
+        )}
+      </>)}
+
+      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} onClose={() => setDeciding(null)}
+                                 onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
+      {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
+    </section>
+  );
+}
+
+/**
  * Manager/director "Leave" tab. requests are the reportees' (manager) or
  * everyone's (director); the parent loads them so the nav can show a count.
  */
@@ -477,7 +580,7 @@ export function OpsLeave({ me, isDirector, requests, reload }) {
           {pending.map((r) => (
             <div key={r.id} className="leave-card">
               <div className="who"><Avatar label={r.name} /><span>{r.name}<small>applied {fmtStamp(r.appliedAt)}</small></span></div>
-              <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtDays(r.days)}</span></div>
+              <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtAmount(r)}</span></div>
               <p title={r.reason}>{r.reason}</p>
               {r.accountId === me.id ? <span className="dim">Your own request — another approver decides it.</span> : (
                 <div className="leave-act">

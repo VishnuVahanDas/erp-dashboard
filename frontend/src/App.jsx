@@ -3,7 +3,7 @@ import {
   Avatar, DroneMark, Empty, Icon, Modal, Stat, Toasts, call, dayOf, fmtDuration, greeting, groupByDay, hhmm,
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
-import { EmployeeLeave, OpsLeave } from './leave.jsx';
+import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
@@ -315,6 +315,7 @@ function EmployeeView({ me, ctx }) {
            title={{ home: name, leave: 'My leave', mbo: 'My MBOs' }[tab] || 'My flight log'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
+      {tab === 'home' && <LeaveBalance me={me} />}
       {tab === 'leave' && <EmployeeLeave me={me} />}
       {tab === 'mbo' && <EmployeeMbo me={me} threads={mbos} reload={loadMbo} />}
 
@@ -737,7 +738,7 @@ function OpsView({ me, ctx, scope }) {
 
   const peopleLabel = isDirector ? 'People' : 'My team';
   const titles = {
-    today: [isDirector ? 'Command center' : 'Team today', isDirector ? 'Live operations' : 'Your reportees'],
+    today: [isDirector ? 'Dashboard' : 'Team today', isDirector ? 'Live operations' : 'Your reportees'],
     all: [isDirector ? 'Flight log' : 'Team log', isDirector ? 'All punches' : 'Team punches'],
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
@@ -750,7 +751,7 @@ function OpsView({ me, ctx, scope }) {
     <Shell me={me} ctx={ctx} tab={tab} setTab={setTab}
            title={titles[tab][0]} subtitle={titles[tab][1]}
            nav={[
-             { key: 'today', label: isDirector ? 'Command center' : 'Team today', icon: 'radar' },
+             { key: 'today', label: isDirector ? 'Dashboard' : 'Team today', icon: 'radar' },
              { key: 'all', label: isDirector ? 'Flight log' : 'Team log', icon: 'log' },
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
              { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
@@ -779,6 +780,8 @@ function OpsView({ me, ctx, scope }) {
           <Stat label={isDirector ? 'People' : 'Reportees'} value={headcount} icon="team"
                 foot={<button className="link" onClick={() => setTab('people')}>{isDirector ? 'Manage people →' : 'View team →'}</button>} />
         </div>
+
+        {isDirector && <DashboardLeave me={me} requests={leaves} reload={loadLeave} onOpenAll={() => setTab('leave')} />}
 
         <div className="grid-2 wide-left">
           <section className="panel">
