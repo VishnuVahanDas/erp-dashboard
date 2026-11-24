@@ -92,6 +92,7 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/auth/password` | signed in | `{current, next}` |
 | GET  | `/api/attendance/my` | employee | own punches |
 | GET  | `/api/attendance/team[?range=today]` | manager | reportees' punches |
+| GET  | `/api/notifications?as=employee\|manager\|director` | signed in (a role you hold) | items waiting on you in that role: `{kind, id, title, detail, tab, at}` |
 | GET  | `/api/punch-fixes/my` | signed in | own missed-punch requests |
 | POST | `/api/punch-fixes` | signed in | `{day, in: HH:mm, out: HH:mm, reason}` — a past day, month not finalized, one open fix per day |
 | POST | `/api/punch-fixes/{id}/cancel` | owner | while pending |
@@ -197,6 +198,13 @@ fix widens that day's span (earliest in, latest out of device punches and the
 fix) and is noted in the breakdown; pending or rejected fixes are ignored.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
 the browser); directors can export a month as CSV for the bank or accountant.
+
+**Notifications:** the bell in the header lists what's waiting on you in the
+role you're viewing as — as a director or manager: pending leave, punch fixes,
+payroll recommendations / proposals and MBOs on your turn, for the people you
+can decide for; as an employee: MBOs on your turn and your own leave / punch
+fixes decided in the last week. It is worked out on each request (no stored
+read state) and refreshes every 30 s; clicking an item opens its tab.
 
 **Missed punches:** an employee asks for a fix ("in 09:00, out 18:00 on 12 Sep",
 with a reason) from the Flight log tab; their manager or a director approves

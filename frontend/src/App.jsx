@@ -8,6 +8,7 @@ import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 import { EmployeePayslips, OpsPayroll } from './payroll.jsx';
 import { PersonDialog, TeamsView } from './team.jsx';
 import { MyPunchFixes, PunchFixQueue } from './punchfix.jsx';
+import { NotificationBell } from './notify.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -102,6 +103,7 @@ function Shell({ me, ctx, nav, tab, setTab, title, subtitle, actions, children }
             <h1>{title}</h1>
           </div>
           <div className="head-right">
+            <NotificationBell me={me} role={ctx.role} onGo={setTab} />
             <Clock />
             {actions}
           </div>

@@ -30,6 +30,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/team.jsx   People → Teams view and the person details dialog
   src/punchfix.jsx  missed-punch requests (employee) and approval queue (dashboard)
+  src/notify.jsx   notifications bell (GET /api/notifications)
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
 docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinned to vyom-erp
