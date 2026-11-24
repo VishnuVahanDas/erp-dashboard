@@ -134,15 +134,16 @@ function LeaveCalendar({ requests }) {
 function LeaveForm({ me, balance, onClose, onSaved }) {
   const [category, setCategory] = useState('personal');
   const [from, setFrom] = useState(todayStr());
-  const [to, setTo] = useState(todayStr());
+  const [toDate, setTo] = useState(todayStr());
   const [half, setHalf] = useState('');
   const [hours, setHours] = useState(1);
   const [reason, setReason] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const single = from && from === to;
-  const halfDay = single ? half : '';
+  // Full day picks a From–To range; every other duration is one date
+  const halfDay = half;
+  const to = halfDay ? from : toDate;
   const shortHours = isShort(halfDay) ? hours : 0;
   const days = countDays(from, to, halfDay, shortHours);
   const left = balance.find((b) => b.category === category)?.remaining ?? 0;
@@ -183,33 +184,39 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
           </div>
         </fieldset>
 
-        <div className="form-grid">
-          <label className="field">
-            <span>From</span>
-            <input type="date" value={from} required
-                   onChange={(e) => { setFrom(e.target.value); if (!to || to < e.target.value) setTo(e.target.value); }} />
-          </label>
-          <label className="field">
-            <span>To</span>
-            <input type="date" value={to} min={from} required onChange={(e) => setTo(e.target.value)} />
-          </label>
-        </div>
+        <fieldset className="field">
+          <span>Duration</span>
+          <div className="role-picks">
+            {[['', 'Full day'], ['first', 'First half'], ['second', 'Second half'],
+              ['late', 'Late arrival'], ['early', 'Early departure']].map(([k, label]) => (
+              <label key={k || 'full'} className={`role-pick ${half === k ? 'on' : ''}`}>
+                <input type="radio" name="half" checked={half === k} onChange={() => setHalf(k)} />{label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-        {single && (
-          <fieldset className="field">
-            <span>Duration</span>
-            <div className="role-picks">
-              {[['', 'Full day'], ['first', 'First half'], ['second', 'Second half'],
-                ['late', 'Late arrival'], ['early', 'Early departure']].map(([k, label]) => (
-                <label key={k || 'full'} className={`role-pick ${half === k ? 'on' : ''}`}>
-                  <input type="radio" name="half" checked={half === k} onChange={() => setHalf(k)} />{label}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        {half === '' ? (
+          <div className="form-grid">
+            <label className="field">
+              <span>From</span>
+              <input type="date" value={from} required
+                     onChange={(e) => { setFrom(e.target.value); if (!toDate || toDate < e.target.value) setTo(e.target.value); }} />
+            </label>
+            <label className="field">
+              <span>To</span>
+              <input type="date" value={toDate} min={from} required onChange={(e) => setTo(e.target.value)} />
+            </label>
+          </div>
+        ) : (
+          <label className="field">
+            <span>Date</span>
+            <input type="date" value={from} required
+                   onChange={(e) => { setFrom(e.target.value); if (!toDate || toDate < e.target.value) setTo(e.target.value); }} />
+          </label>
         )}
 
-        {single && isShort(half) && (
+        {isShort(half) && (
           <label className="field">
             <span>{half === 'late' ? 'How many hours late?' : 'How many hours early?'}</span>
             <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
