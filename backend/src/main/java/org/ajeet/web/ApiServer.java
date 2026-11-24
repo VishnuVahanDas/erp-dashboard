@@ -228,15 +228,23 @@ public class ApiServer {
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
             // ---- payroll: directors run it; managers read reportees' locked months; everyone their payslips
             } else if (method.equals("GET") && path.equals("/payroll/salaries")) {
-                requireRole(ex, AuthStore.DIRECTOR);
-                send(ex, 200, mapper.createObjectNode().set("salaries", mapper.valueToTree(payroll.salaries())));
+                // directors: everyone; managers: their reportees (scoped in the store)
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("salaries", mapper.valueToTree(payroll.salaries(acct))));
             } else if (method.equals("POST") && path.equals("/payroll/salaries")) {
-                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                // director: applied at once; manager: a proposal for a reportee, pending a director
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 JsonNode b = readJson(ex);
-                long id = payroll.addSalary(acct, new PayrollStore.SalaryInput(b.path("accountId").asLong(0),
+                PayrollStore.Saved saved = payroll.addSalary(acct, new PayrollStore.SalaryInput(b.path("accountId").asLong(0),
                         number(b, "basic"), number(b, "hra"), number(b, "otherAllowance"),
                         b.path("effectiveFrom").asText("")));
-                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", saved.id()).put("status", saved.status()));
+            } else if (method.equals("POST") && path.matches("/payroll/salaries/\\d+/(approve|reject)")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                String[] parts = path.split("/");
+                payroll.decideSalary(acct, Long.parseLong(parts[3]), parts[4].equals("approve"),
+                        readJson(ex).path("note").asText(""));
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
             } else if (method.equals("GET") && path.equals("/payroll/holidays")) {
                 requireAccount(ex);
                 send(ex, 200, mapper.createObjectNode().set("holidays", mapper.valueToTree(payroll.holidays())));

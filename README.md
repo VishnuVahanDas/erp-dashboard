@@ -149,7 +149,8 @@ browser from the threads the tab already loads; there is no extra API.
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET / POST | `/api/payroll/salaries` | director | history of salary rows / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds a row |
+| GET / POST | `/api/payroll/salaries` | director, manager | salary rows with `status` (managers: their reportees) / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds a row → `status` approved (director) or pending (manager) |
+| POST | `/api/payroll/salaries/{id}/approve`, `/reject` | director | `{note}` (required to reject); pending proposals only, first decision wins |
 | GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
 | POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
 | GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
@@ -170,6 +171,8 @@ rounded up to the next half hour. Sundays and holidays are paid. While a month
 is running, only days up to yesterday count. Someone whose first salary row
 starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
+managers can propose a salary or a change for their reportees, which counts
+only once a director approves it (one waiting proposal per person);
 a finalized month can't change. Each line stores its day-by-day breakdown as
 generated, so a payslip doesn't change if punches are re-synced later.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from

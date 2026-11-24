@@ -56,10 +56,16 @@ public class PayrollStore {
         public ForbiddenException(String msg) { super(msg); }
     }
 
-    /** One salary row (history). gross = basic + hra + otherAllowance. */
+    /**
+     * One salary row (history). gross = basic + hra + otherAllowance.
+     * status: approved (counts for payroll) | pending (a manager's proposal) | rejected.
+     */
     public record Salary(long id, long accountId, String name, String email, double basic, double hra,
                          double otherAllowance, double gross, String effectiveFrom, String createdBy,
-                         long createdAt) {}
+                         long createdAt, String status, String decidedBy, Long decidedAt, String decisionNote) {}
+
+    /** What a save did: approved straight away (director) or pending (manager proposal). */
+    public record Saved(long id, String status) {}
 
     public record Holiday(String day, String name) {}
 
@@ -98,6 +104,13 @@ public class PayrollStore {
                             created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
                         )""");
                 st.execute("CREATE INDEX IF NOT EXISTS payroll_salaries_account ON payroll_salaries (account_id, effective_from)");
+                // manager proposals wait for a director; rows from before this are approved
+                st.execute("""
+                        ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved'
+                            CHECK (status IN ('pending','approved','rejected'))""");
+                st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decided_by BIGINT REFERENCES accounts(id) ON DELETE SET NULL");
+                st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ");
+                st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decision_note TEXT NOT NULL DEFAULT ''");
                 st.execute("""
                         CREATE TABLE IF NOT EXISTS payroll_holidays (
                             day  DATE PRIMARY KEY,
@@ -141,23 +154,40 @@ public class PayrollStore {
 
     // ------------------------------------------------------------- salaries
 
-    /** Every salary row, newest first per person (the history). */
-    public synchronized List<Salary> salaries() throws IOException {
+    /**
+     * Salary rows (all statuses), newest first per person. Directors see
+     * everyone; managers only the people who report to them.
+     */
+    public synchronized List<Salary> salaries(AuthStore.Account who) throws IOException {
+        boolean director = who.has(AuthStore.DIRECTOR);
+        if (!director && !who.has(AuthStore.MANAGER)) throw new ForbiddenException("director or manager role required");
         List<Salary> out = new ArrayList<>();
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("""
-                     SELECT s.id, s.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
-                            s.basic, s.hra, s.other_allowance, s.effective_from::text,
-                            COALESCE(NULLIF(c.full_name,''), c.email),
-                            (EXTRACT(EPOCH FROM s.created_at) * 1000)::bigint
-                     FROM payroll_salaries s
-                     JOIN accounts a ON a.id = s.account_id
-                     LEFT JOIN accounts c ON c.id = s.created_by
-                     ORDER BY 3, s.effective_from DESC, s.id DESC""")) {
-            while (rs.next()) {
-                double basic = rs.getDouble(5), hra = rs.getDouble(6), other = rs.getDouble(7);
-                out.add(new Salary(rs.getLong(1), rs.getLong(2), rs.getString(3), rs.getString(4), basic, hra,
-                        other, round2(basic + hra + other), rs.getString(8), rs.getString(9), rs.getLong(10)));
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT s.id, s.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
+                       s.basic, s.hra, s.other_allowance, s.effective_from::text,
+                       COALESCE(NULLIF(c.full_name,''), c.email),
+                       (EXTRACT(EPOCH FROM s.created_at) * 1000)::bigint,
+                       s.status, COALESCE(NULLIF(d.full_name,''), d.email),
+                       (EXTRACT(EPOCH FROM s.decided_at) * 1000)::bigint, s.decision_note
+                FROM payroll_salaries s
+                JOIN accounts a ON a.id = s.account_id
+                LEFT JOIN accounts c ON c.id = s.created_by
+                LEFT JOIN accounts d ON d.id = s.decided_by
+                """ + (director ? "" : """
+                WHERE s.account_id <> ? AND s.account_id IN
+                    (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)
+                """) + "ORDER BY 3, s.effective_from DESC, s.id DESC")) {
+            if (!director) {
+                ps.setLong(1, who.id());
+                ps.setLong(2, who.id());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    double basic = rs.getDouble(5), hra = rs.getDouble(6), other = rs.getDouble(7);
+                    out.add(new Salary(rs.getLong(1), rs.getLong(2), rs.getString(3), rs.getString(4), basic, hra,
+                            other, round2(basic + hra + other), rs.getString(8), rs.getString(9), rs.getLong(10),
+                            rs.getString(11), rs.getString(12), (Long) rs.getObject(13), rs.getString(14)));
+                }
             }
         } catch (SQLException e) {
             throw new IOException("salary query failed: " + e.getMessage(), e);
@@ -165,29 +195,77 @@ public class PayrollStore {
         return out;
     }
 
-    public synchronized long addSalary(AuthStore.Account who, SalaryInput in) throws IOException {
+    /**
+     * A director's save is approved at once. A manager's save for one of
+     * their reportees is a pending proposal a director must approve; only one
+     * proposal per person can wait at a time.
+     */
+    public synchronized Saved addSalary(AuthStore.Account who, SalaryInput in) throws IOException {
         if (in.accountId() <= 0) throw new IllegalArgumentException("pick the employee");
+        boolean director = who.has(AuthStore.DIRECTOR);
+        if (!director) {
+            if (!who.has(AuthStore.MANAGER) || in.accountId() == who.id() || !reportsTo(in.accountId(), who.id()))
+                throw new ForbiddenException("you can only propose a salary for someone who reports to you");
+            if (hasPending(in.accountId()))
+                throw new IllegalArgumentException("a salary proposal for this person is already waiting for a director");
+        }
         money(in.basic(), "basic");
         money(in.hra(), "HRA");
         money(in.otherAllowance(), "other allowance");
         if (in.basic() + in.hra() + in.otherAllowance() <= 0) throw new IllegalArgumentException("salary must be more than 0");
         LocalDate from = date(in.effectiveFrom(), "effective from");
+        String status = director ? "approved" : "pending";
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO payroll_salaries (account_id, basic, hra, other_allowance, effective_from, created_by)
-                SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM accounts WHERE id = ?) RETURNING id""")) {
+                INSERT INTO payroll_salaries (account_id, basic, hra, other_allowance, effective_from, created_by,
+                                              status, decided_by, decided_at)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN now() END
+                WHERE EXISTS (SELECT 1 FROM accounts WHERE id = ?) RETURNING id""")) {
             ps.setLong(1, in.accountId());
             ps.setDouble(2, round2(in.basic()));
             ps.setDouble(3, round2(in.hra()));
             ps.setDouble(4, round2(in.otherAllowance()));
             ps.setDate(5, Date.valueOf(from));
             ps.setLong(6, who.id());
-            ps.setLong(7, in.accountId());
+            ps.setString(7, status);
+            if (director) ps.setLong(8, who.id()); else ps.setNull(8, java.sql.Types.BIGINT);
+            ps.setBoolean(9, director);
+            ps.setLong(10, in.accountId());
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw new IllegalArgumentException("employee not found");
-                return rs.getLong(1);
+                return new Saved(rs.getLong(1), status);
             }
         } catch (SQLException e) {
             throw new IOException("salary save failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Director approves or rejects a manager's pending proposal. First decision wins. */
+    public synchronized void decideSalary(AuthStore.Account who, long id, boolean approve, String note) throws IOException {
+        String n = note == null ? "" : note.trim();
+        if (!approve && n.isEmpty()) throw new IllegalArgumentException("say why the proposal is rejected");
+        if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE payroll_salaries SET status = ?, decided_by = ?, decided_at = now(), decision_note = ?
+                WHERE id = ? AND status = 'pending'""")) {
+            ps.setString(1, approve ? "approved" : "rejected");
+            ps.setLong(2, who.id());
+            ps.setString(3, n);
+            ps.setLong(4, id);
+            if (ps.executeUpdate() == 0) throw new IllegalArgumentException("this proposal was already decided or doesn't exist");
+        } catch (SQLException e) {
+            throw new IOException("salary decision failed: " + e.getMessage(), e);
+        }
+    }
+
+    private boolean hasPending(long accountId) throws IOException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM payroll_salaries WHERE account_id = ? AND status = 'pending' LIMIT 1")) {
+            ps.setLong(1, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IOException("salary check failed: " + e.getMessage(), e);
         }
     }
 
@@ -512,7 +590,7 @@ public class PayrollStore {
                        s.other_allowance, s.effective_from
                 FROM payroll_salaries s
                 JOIN accounts a ON a.id = s.account_id
-                WHERE a.status = 'active' AND s.effective_from <= ?
+                WHERE a.status = 'active' AND s.status = 'approved' AND s.effective_from <= ?
                 ORDER BY s.account_id, s.effective_from DESC, s.id DESC""")) {
             ps.setDate(1, Date.valueOf(monthEnd));
             try (ResultSet rs = ps.executeQuery()) {
@@ -530,7 +608,7 @@ public class PayrollStore {
      * (a later row) doesn't make someone a mid-month joiner.
      */
     private LocalDate effectiveStart(long accountId, LocalDate current) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("SELECT MIN(effective_from) FROM payroll_salaries WHERE account_id = ?")) {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT MIN(effective_from) FROM payroll_salaries WHERE account_id = ? AND status = 'approved'")) {
             ps.setLong(1, accountId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() && rs.getDate(1) != null ? rs.getDate(1).toLocalDate() : current;

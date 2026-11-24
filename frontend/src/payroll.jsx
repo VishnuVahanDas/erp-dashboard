@@ -314,7 +314,11 @@ function RunPanel({ me, isDirector, flash, setError }) {
 
 /* ------------------------------------------------------------ salaries */
 
-function SalaryDialog({ me, people, person, onClose, onDone }) {
+const SAL_STATUS = { approved: 'live', pending: 'warn', rejected: 'bad' };
+const SAL_LABEL = { approved: 'Approved', pending: 'Waiting for a director', rejected: 'Rejected' };
+
+/** Director: saved at once. Manager: a proposal a director approves. */
+function SalaryDialog({ me, isDirector, people, person, onClose, onDone }) {
   const today = new Date().toLocaleDateString('sv');
   const [accountId, setAccountId] = useState(person ? String(person.accountId) : '');
   const [basic, setBasic] = useState(person ? String(person.basic) : '');
@@ -325,22 +329,23 @@ function SalaryDialog({ me, people, person, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const gross = (Number(basic) || 0) + (Number(hra) || 0) + (Number(other) || 0);
   const day = gross / 30;
+  const verb = isDirector ? (person ? 'Change salary' : 'Set salary') : (person ? 'Propose a change' : 'Propose a salary');
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await call('POST', '/api/payroll/salaries', {
+      const r = await call('POST', '/api/payroll/salaries', {
         accountId: Number(accountId), basic: Number(basic) || 0, hra: Number(hra) || 0,
         otherAllowance: Number(other) || 0, effectiveFrom: from,
       }, me.token);
-      onDone('Salary saved');
+      onDone(r.status === 'pending' ? 'Sent to a director for approval' : 'Salary saved');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
 
   return (
-    <Modal title={person ? 'Change salary' : 'Set salary'} eyebrow={person ? person.name : 'Payroll'} onClose={onClose}>
+    <Modal title={verb} eyebrow={person ? person.name : 'Payroll'} onClose={onClose}>
       <form className="person-form" onSubmit={submit}>
         {!person && (
           <label className="field"><span>Employee</span>
@@ -350,6 +355,7 @@ function SalaryDialog({ me, people, person, onClose, onDone }) {
             </select>
           </label>
         )}
+        {person && <p className="muted">Now: <b>{money(person.gross)}</b> / month since {person.effectiveFrom}.</p>}
         <div className="form-grid">
           <label className="field"><span>Basic / month (₹)</span>
             <input type="number" min="0" step="0.01" required value={basic} onChange={(e) => setBasic(e.target.value)} autoFocus />
@@ -367,87 +373,192 @@ function SalaryDialog({ me, people, person, onClose, onDone }) {
         <div className="leave-sum"><Icon name="money" /><span>
           Gross <b>{money(gross)}</b> / month · in a 30-day month that's <b>{money(day)}</b> a day, <b>{money(day / 8)}</b> an hour missed.
         </span></div>
-        <small className="dim">A change adds a new row — the old salary stays in the history. The first salary's date is the
-          joining date: a mid-month start is paid from that day.</small>
+        <small className="dim">
+          {isDirector ? 'Applies straight away. ' : 'A director has to approve it before it counts for payroll. '}
+          A change adds a new row — the old salary stays in the history. The first salary's date is the
+          joining date: a mid-month start is paid from that day.
+        </small>
         {error && <div className="inline err">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !accountId || gross <= 0}>{busy ? 'Saving…' : 'Save salary'}</button>
+          <button className="btn primary" disabled={busy || !accountId || gross <= 0}>
+            {busy ? 'Saving…' : isDirector ? 'Save salary' : 'Send for approval'}
+          </button>
         </div>
       </form>
     </Modal>
   );
 }
 
-function SalariesPanel({ me, people, flash, setError }) {
+function RejectDialog({ me, row, onClose, onDone }) {
+  const [note, setNote] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await call('POST', `/api/payroll/salaries/${row.id}/reject`, { note }, me.token); onDone(`Rejected ${row.name}'s salary proposal`); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Reject salary proposal" eyebrow={row.name} onClose={onClose}>
+      <form className="person-form" onSubmit={submit}>
+        <p className="muted">{row.createdBy} proposed <b>{money(row.gross)}</b> / month from {row.effectiveFrom}.</p>
+        <label className="field"><span>Reason (shown to {row.createdBy})</span>
+          <textarea rows={3} maxLength={500} required value={note} onChange={(e) => setNote(e.target.value)} autoFocus
+                    placeholder="e.g. Budget is ₹14,000 until the probation review." />
+        </label>
+        {error && <div className="inline err">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Back</button>
+          <button className="btn danger" disabled={busy || !note.trim()}>{busy ? 'Saving…' : 'Reject'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Director: every salary + proposals to approve. Manager: reportees, proposing changes. */
+function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
   const [rows, setRows] = useState([]);
   const [editing, setEditing] = useState(null); // null | 'new' | current row
   const [history, setHistory] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const [busy, setBusy] = useState(null);
   const load = useCallback(async () => {
-    try { setRows((await call('GET', '/api/payroll/salaries', null, me.token)).salaries || []); }
-    catch (e) { setError(e.message); }
-  }, [me.token, setError]);
+    try {
+      const r = (await call('GET', '/api/payroll/salaries', null, me.token)).salaries || [];
+      setRows(r);
+      onPending?.(r.filter((x) => x.status === 'pending').length);
+    } catch (e) { setError(e.message); }
+  }, [me.token, setError, onPending]);
   useEffect(() => { load(); }, [load]);
 
-  // rows come newest-first per person: the first one seen is the current salary
+  // rows come newest-first per person: the first approved one is the current salary
   const current = useMemo(() => {
     const seen = new Map();
-    for (const r of rows) if (!seen.has(r.accountId)) seen.set(r.accountId, { ...r, changes: 0 });
-    for (const r of rows) seen.get(r.accountId).changes++;
+    for (const r of rows) if (r.status === 'approved' && !seen.has(r.accountId)) seen.set(r.accountId, r);
     return [...seen.values()];
   }, [rows]);
+  const pending = rows.filter((r) => r.status === 'pending');
+  const pendingFor = (id) => pending.find((r) => r.accountId === id);
+  const latestRejected = (id) => {
+    const mine = rows.filter((r) => r.accountId === id && r.status !== 'approved');
+    return mine[0]?.status === 'rejected' ? mine[0] : null;
+  };
   const pickable = useMemo(() => {
     const map = new Map();
-    for (const p of people) if (p.status === 'active' && !map.has(p.id)) map.set(p.id, p);
+    for (const p of people) if ((p.status ?? 'active') === 'active' && p.id !== (isDirector ? -1 : me.id) && !map.has(p.id)) map.set(p.id, p);
     return [...map.values()].sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
-  }, [people]);
-  const without = pickable.filter((p) => !current.some((c) => c.accountId === p.id));
+  }, [people, isDirector, me.id]);
+  const without = pickable.filter((p) => !current.some((c) => c.accountId === p.id) && !pendingFor(p.id));
+  const done = (m) => { setEditing(null); setRejecting(null); flash(m); load(); };
 
-  return (
+  const approve = async (r) => {
+    setBusy(r.id);
+    try { await call('POST', `/api/payroll/salaries/${r.id}/approve`, {}, me.token); done(`Approved ${r.name}'s salary`); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(null); }
+  };
+
+  return (<>
+    {isDirector && pending.length > 0 && (
+      <section className="panel">
+        <div className="panel-head"><h3>Waiting for your approval</h3><span className="muted">{pending.length} proposal(s) from managers</span></div>
+        <div className="leave-cards">
+          {pending.map((r) => {
+            const now = current.find((c) => c.accountId === r.accountId);
+            return (
+              <div key={r.id} className="leave-card">
+                <div className="who"><Avatar label={r.name} /><span>{r.name}<small>proposed by {r.createdBy} · {fmtStamp(r.createdAt)}</small></span></div>
+                <div className="pay-propose">
+                  <span><small>Now</small><b>{now ? money(now.gross) : 'no salary'}</b></span>
+                  <span>→</span>
+                  <span><small>Proposed from {r.effectiveFrom}</small><b>{money(r.gross)}</b></span>
+                </div>
+                <p>Basic {money(r.basic)} · HRA {money(r.hra)} · other {money(r.otherAllowance)}</p>
+                <div className="leave-act">
+                  <button className="btn danger small" onClick={() => setRejecting(r)}>Reject</button>
+                  <button className="btn primary small" disabled={busy === r.id} onClick={() => approve(r)}><Icon name="approve" size={15} />Approve</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    )}
+
     <section className="panel">
       <div className="panel-head">
-        <h3>Salaries</h3>
+        <h3>{isDirector ? 'Salaries' : "Your team's salaries"}</h3>
         <button className="btn primary" onClick={() => setEditing('new')} disabled={!without.length}
-                title={without.length ? '' : 'Everyone has a salary — use Change on a row'}><Icon name="plus" />Set salary</button>
+                title={without.length ? '' : 'Everyone has a salary or a proposal — use the row buttons'}>
+          <Icon name="plus" />{isDirector ? 'Set salary' : 'Propose salary'}
+        </button>
       </div>
-      {without.length > 0 && <div className="inline pay-note">{without.length} active people have no salary yet and won't be in payroll: {without.slice(0, 6).map((p) => p.name || p.email).join(', ')}{without.length > 6 ? '…' : ''}</div>}
-      {!current.length ? <Empty title="No salaries yet" hint="Set each person's monthly salary to include them in payroll." /> : (
+      {without.length > 0 && (
+        <div className="inline pay-note">{without.length} {isDirector ? 'active people have' : 'of your reportees have'} no salary yet and won't be in payroll: {without.slice(0, 6).map((p) => p.name || p.email).join(', ')}{without.length > 6 ? '…' : ''}</div>
+      )}
+      {!isDirector && <small className="dim pay-foot">Salaries you propose apply once a director approves them.</small>}
+      {!current.length && !pending.length ? <Empty title="No salaries yet" hint={isDirector ? "Set each person's monthly salary to include them in payroll." : 'Propose a salary for someone in your team; a director approves it.'} /> : (
         <div className="table-wrap">
           <table className="leave-table">
             <thead><tr><th>Person</th><th>Basic</th><th>HRA</th><th>Other</th><th>Gross / month</th><th>Since</th><th /></tr></thead>
             <tbody>
-              {current.map((r) => (
-                <tr key={r.accountId}>
-                  <td><div className="who"><Avatar label={r.name} /><span>{r.name}<small>{r.email}</small></span></div></td>
-                  <td className="mono">{money(r.basic)}</td>
-                  <td className="mono">{money(r.hra)}</td>
-                  <td className="mono">{money(r.otherAllowance)}</td>
-                  <td className="mono strong">{money(r.gross)}</td>
-                  <td className="mono dim">{r.effectiveFrom}</td>
-                  <td className="row-act"><div className="leave-act">
-                    {r.changes > 1 && <button className="btn ghost small" onClick={() => setHistory(r.accountId)}>History ({r.changes})</button>}
-                    <button className="btn ghost small" onClick={() => setEditing(r)}><Icon name="edit" size={14} />Change</button>
-                  </div></td>
-                </tr>
-              ))}
+              {[...current, ...pending.filter((p) => !current.some((c) => c.accountId === p.accountId))].map((r) => {
+                const cur = r.status === 'approved' ? r : null;
+                const wait = pendingFor(r.accountId);
+                const rej = latestRejected(r.accountId);
+                const changes = rows.filter((x) => x.accountId === r.accountId).length;
+                return (
+                  <tr key={r.accountId}>
+                    <td>
+                      <div className="who"><Avatar label={r.name} /><span>{r.name}<small>{r.email}</small></span></div>
+                      {wait && <small className="sub pay-flag">proposed {money(wait.gross)} from {wait.effectiveFrom} — waiting for a director</small>}
+                      {!wait && rej && <small className="sub pay-rejected" title={rej.decisionNote}>last proposal rejected: “{rej.decisionNote}”</small>}
+                    </td>
+                    <td className="mono">{cur ? money(cur.basic) : '—'}</td>
+                    <td className="mono">{cur ? money(cur.hra) : '—'}</td>
+                    <td className="mono">{cur ? money(cur.otherAllowance) : '—'}</td>
+                    <td className="mono strong">{cur ? money(cur.gross) : <span className="pill warn">pending</span>}</td>
+                    <td className="mono dim">{cur ? cur.effectiveFrom : '—'}</td>
+                    <td className="row-act"><div className="leave-act">
+                      {changes > 1 && <button className="btn ghost small" onClick={() => setHistory(r.accountId)}>History ({changes})</button>}
+                      {cur && (isDirector || !wait) && (
+                        <button className="btn ghost small" onClick={() => setEditing(cur)}><Icon name="edit" size={14} />{isDirector ? 'Change' : 'Propose change'}</button>
+                      )}
+                    </div></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
-      {editing && <SalaryDialog me={me} people={without} person={editing === 'new' ? null : editing}
-                                onClose={() => setEditing(null)} onDone={(m) => { setEditing(null); flash(m); load(); }} />}
-      {history && (
-        <Modal title={rows.find((r) => r.accountId === history).name} eyebrow="Salary history" onClose={() => setHistory(null)}>
-          <ul className="perf-list">
-            {rows.filter((r) => r.accountId === history).map((r) => (
-              <li key={r.id}><span><b>{money(r.gross)} / month</b>
-                <small>from {r.effectiveFrom} · basic {money(r.basic)} · HRA {money(r.hra)} · other {money(r.otherAllowance)} · set by {r.createdBy || '—'} {fmtStamp(r.createdAt)}</small></span></li>
-            ))}
-          </ul>
-        </Modal>
-      )}
     </section>
-  );
+
+    {editing && <SalaryDialog me={me} isDirector={isDirector} people={without} person={editing === 'new' ? null : editing}
+                              onClose={() => setEditing(null)} onDone={done} />}
+    {rejecting && <RejectDialog me={me} row={rejecting} onClose={() => setRejecting(null)} onDone={done} />}
+    {history && (
+      <Modal title={rows.find((r) => r.accountId === history).name} eyebrow="Salary history" onClose={() => setHistory(null)}>
+        <ul className="perf-list">
+          {rows.filter((r) => r.accountId === history).map((r) => (
+            <li key={r.id}>
+              <span><b>{money(r.gross)} / month</b>
+                <small>from {r.effectiveFrom} · basic {money(r.basic)} · HRA {money(r.hra)} · other {money(r.otherAllowance)}</small>
+                <small>{r.status === 'approved' && r.createdBy === r.decidedBy ? `set by ${r.createdBy || '—'}` : `proposed by ${r.createdBy || '—'}`} {fmtStamp(r.createdAt)}
+                  {r.decidedBy && r.createdBy !== r.decidedBy ? ` · ${r.status} by ${r.decidedBy} ${fmtStamp(r.decidedAt)}` : ''}
+                  {r.decisionNote ? ` · “${r.decisionNote}”` : ''}</small>
+              </span>
+              <span className={`pill ${SAL_STATUS[r.status]}`}>{SAL_LABEL[r.status]}</span>
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    )}
+  </>);
 }
 
 /* ------------------------------------------------------------ holidays */
@@ -509,21 +620,31 @@ export function OpsPayroll({ me, isDirector, people }) {
   const [section, setSection] = useState('run');
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
+  const [waiting, setWaiting] = useState(0); // salary proposals waiting for a director
   const flash = useCallback((m) => { setNotice(m); setTimeout(() => setNotice(null), 5000); }, []);
+  useEffect(() => {
+    if (!isDirector) return;
+    call('GET', '/api/payroll/salaries', null, me.token)
+      .then((d) => setWaiting((d.salaries || []).filter((r) => r.status === 'pending').length)).catch(() => {});
+  }, [isDirector, me.token]);
+  const sections = isDirector
+    ? [['run', 'Monthly payroll'], ['salaries', 'Salaries'], ['holidays', 'Holidays']]
+    : [['run', 'Monthly payroll'], ['salaries', 'Salaries']];
 
   return (<>
     <Toasts notice={notice} error={error} onClose={() => setError(null)} />
-    {isDirector && (
-      <div className="role-picks pay-sections">
-        {[['run', 'Monthly payroll'], ['salaries', 'Salaries'], ['holidays', 'Holidays']].map(([k, label]) => (
-          <button key={k} className={`role-pick ${section === k ? 'on' : ''}`} onClick={() => setSection(k)}>{label}</button>
-        ))}
-      </div>
-    )}
+    <div className="role-picks pay-sections">
+      {sections.map(([k, label]) => (
+        <button key={k} className={`role-pick ${section === k ? 'on' : ''}`} onClick={() => setSection(k)}>
+          {label}{k === 'salaries' && waiting > 0 && <em className="nav-count">{waiting}</em>}
+        </button>
+      ))}
+    </div>
     {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} />}
-    {isDirector && section === 'salaries' && <SalariesPanel me={me} people={people} flash={flash} setError={setError} />}
+    {section === 'salaries' && <SalariesPanel me={me} isDirector={isDirector} people={people} flash={flash}
+                                              setError={setError} onPending={isDirector ? setWaiting : undefined} />}
     {isDirector && section === 'holidays' && <HolidaysPanel me={me} flash={flash} setError={setError} />}
-    {!isDirector && <p className="dim pay-foot">You see your reportees' pay once a director finalizes the month.</p>}
+    {!isDirector && section === 'run' && <p className="dim pay-foot">You see your reportees' pay once a director finalizes the month.</p>}
   </>);
 }
 
