@@ -608,11 +608,12 @@ public class PayrollStore {
                 double basic = (Double) emp[2], hra = (Double) emp[3], other = (Double) emp[4];
                 LocalDate effective = (LocalDate) emp[5];
 
-                Map<LocalDate, LocalDateTime[]> spans = enroll == null ? Map.of() : punchSpans(enroll, first, last);
+                Map<LocalDate, LocalDateTime[]> spans = enroll == null ? new HashMap<>() : punchSpans(enroll, first, last);
+                Map<LocalDate, String> fixed = mergeApprovedFixes(accountId, first, last, spans);
                 Map<LocalDate, Leave> leave = approvedLeave(accountId, first, last);
                 Object[] corr = corrections.getOrDefault(accountId, new Object[]{0.0, ""});
                 Computed c = compute(ym, basic + hra + other, effective, countUntil, holidays, leave, spans,
-                        (Double) corr[0]);
+                        fixed, (Double) corr[0]);
 
                 try (PreparedStatement ps = conn.prepareStatement("""
                         INSERT INTO payroll_lines (month, account_id, linked, basic, hra, other_allowance, full_gross,
@@ -718,7 +719,8 @@ public class PayrollStore {
      */
     static Computed compute(YearMonth ym, double fullGross, LocalDate effectiveFrom, LocalDate countUntil,
                             Map<LocalDate, String> holidays, Map<LocalDate, Leave> leave,
-                            Map<LocalDate, LocalDateTime[]> spans, double correctionHours) {
+                            Map<LocalDate, LocalDateTime[]> spans, Map<LocalDate, String> fixed,
+                            double correctionHours) {
         int daysInMonth = ym.lengthOfMonth();
         double dayRate = fullGross / daysInMonth;
         double hourRate = dayRate / 8.0;
@@ -743,7 +745,9 @@ public class PayrollStore {
             int missed = missedMinutes(required, spanMin);
             workingDays++;
             missedMin += missed;
-            days.add(new Day(d.toString(), "work", lv == null ? "" : lv.note(), f, l, spanMin, required, missed));
+            String note = String.join(", ", java.util.stream.Stream.of(lv == null ? null : lv.note(), fixed.get(d))
+                    .filter(x -> x != null && !x.isEmpty()).toList());
+            days.add(new Day(d.toString(), "work", note, f, l, spanMin, required, missed));
         }
         double missedHours = missedMin / 60.0;
         double cut = round2(hourRate * Math.max(0, missedHours + correctionHours));
@@ -792,6 +796,41 @@ public class PayrollStore {
                 return rs.next() && rs.getDate(1) != null ? rs.getDate(1).toLocalDate() : current;
             }
         }
+    }
+
+    /**
+     * Widens each day's span with approved missed-punch fixes (earliest in,
+     * latest out of device punches and the fix). Returns day -> note for the
+     * breakdown. punch_fixes may not exist on a database that predates it.
+     */
+    private Map<LocalDate, String> mergeApprovedFixes(long accountId, LocalDate first, LocalDate last,
+                                                      Map<LocalDate, LocalDateTime[]> spans) throws SQLException {
+        Map<LocalDate, String> notes = new HashMap<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT to_regclass('punch_fixes') IS NOT NULL")) {
+            rs.next();
+            if (!rs.getBoolean(1)) return notes;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT f.day, f.in_time, f.out_time, COALESCE(NULLIF(d.full_name,''), d.email)
+                FROM punch_fixes f LEFT JOIN accounts d ON d.id = f.decided_by
+                WHERE f.account_id = ? AND f.status = 'approved' AND f.day BETWEEN ? AND ?""")) {
+            ps.setLong(1, accountId);
+            ps.setDate(2, Date.valueOf(first));
+            ps.setDate(3, Date.valueOf(last));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    LocalDate day = rs.getDate(1).toLocalDate();
+                    LocalDateTime in = day.atTime(rs.getTime(2).toLocalTime()), out = day.atTime(rs.getTime(3).toLocalTime());
+                    LocalDateTime[] had = spans.get(day);
+                    spans.put(day, had == null ? new LocalDateTime[]{in, out} : new LocalDateTime[]{
+                            had[0].isBefore(in) ? had[0] : in, had[1].isAfter(out) ? had[1] : out});
+                    notes.put(day, "punch fixed " + rs.getTime(2).toString().substring(0, 5) + "-"
+                            + rs.getTime(3).toString().substring(0, 5) + " (approved by " + rs.getString(4) + ")");
+                }
+            }
+        }
+        return notes;
     }
 
     private Map<LocalDate, LocalDateTime[]> punchSpans(int enroll, LocalDate first, LocalDate last) throws SQLException {

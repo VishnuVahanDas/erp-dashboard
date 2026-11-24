@@ -192,7 +192,9 @@ person's managers accepts it by setting the salary, or declines it with a
 reason. Managers open Payroll on **My team**: every reportee with their payroll
 status, **Add reportee to payroll** / **Set salary** / **Change**, and the
 requests waiting for them. Directors still see and decide everything. Each line stores its day-by-day breakdown as
-generated, so a payslip doesn't change if punches are re-synced later.
+generated, so a payslip doesn't change if punches are re-synced later. An approved missed-punch
+fix widens that day's span (earliest in, latest out of device punches and the
+fix) and is noted in the breakdown; pending or rejected fixes are ignored.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
 the browser); directors can export a month as CSV for the bank or accountant.
 
