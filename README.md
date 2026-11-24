@@ -101,7 +101,7 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/sync` | director | `{since?}` → queues a sync for the agent, waits up to 25 s (`202` if still running) |
 | GET  | `/api/sync/status` | director | agent `online`, host, last sync, last error |
 | GET  | `/api/leave/my` | signed in | own requests + this year's `balance` per category |
-| POST | `/api/leave` | signed in | `{category: personal\|sick, from, to, halfDay?: first\|second, reason}` |
+| POST | `/api/leave` | signed in | `{category: personal\|sick, from, to, halfDay?: first\|second\|late\|early, hours?, reason}`; `hours` only for late/early |
 | POST | `/api/leave/{id}/approve`, `/reject` | reporting manager, director | `{note?}`; not your own request; first decision wins |
 | POST | `/api/leave/{id}/cancel` | owner, reporting manager, director | owner: pending, or approved and not started |
 | GET  | `/api/leave/team` | manager | reportees' requests |
@@ -109,8 +109,17 @@ directors and old pending/rejected sign-ups become `disabled`.
 | GET / PUT | `/api/leave/quotas` | signed in / director | `{personal, sick}` days per calendar year |
 
 **Leave (LTS):** Sundays inside a range don't count; a half-day is 0.5. A
-request must fit in the yearly quota counting approved + pending days, and
-can't cross into a new year. Quotas default to 12 personal / 6 sick.
+**late arrival** or **early departure** is 0.5–4 hours of one date in
+half-hour steps, counted as hours ÷ 8 of a day. Every partial request (half-day,
+late, early) is a single date. Late and first half take the morning, early and
+second half the evening, so late + early on one day is fine but late + first
+half clashes. A request must fit in the yearly quota counting approved + pending
+days, and can't cross into a new year. Quotas default to 12 personal / 6 sick.
+
+The director's **Dashboard** has a leave panel: pending requests with Approve /
+Reject, who is on leave today, upcoming approved leave, and shortcuts to the
+quotas and the full Leave requests tab. Employees see their leave balance on
+their home page.
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
