@@ -92,6 +92,11 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/auth/password` | signed in | `{current, next}` |
 | GET  | `/api/attendance/my` | employee | own punches |
 | GET  | `/api/attendance/team[?range=today]` | manager | reportees' punches |
+| GET  | `/api/punch-fixes/my` | signed in | own missed-punch requests |
+| POST | `/api/punch-fixes` | signed in | `{day, in: HH:mm, out: HH:mm, reason}` — a past day, month not finalized, one open fix per day |
+| POST | `/api/punch-fixes/{id}/cancel` | owner | while pending |
+| GET  | `/api/punch-fixes/team` | manager (reportees), director (all) | requests to decide |
+| POST | `/api/punch-fixes/{id}/approve`, `/reject` | director, the person's manager (never own) | `{note}` required to reject |
 | GET  | `/api/attendance/person/{accountId}?month=YYYY-MM` | director (anyone), manager (reportees) | one person's punches that month + `linked`; for the People details |
 | GET  | `/api/attendance/today`, `/all` | director | everyone's punches |
 | GET  | `/api/team` | manager | reportees (one row per project line) |
@@ -191,6 +196,11 @@ generated, so a payslip doesn't change if punches are re-synced later.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
 the browser); directors can export a month as CSV for the bank or accountant.
 
+**Missed punches:** an employee asks for a fix ("in 09:00, out 18:00 on 12 Sep",
+with a reason) from the Flight log tab; their manager or a director approves
+it on the Dashboard. Fixes are kept in `punch_fixes` — the device `punches`
+are never changed — and payroll uses approved ones when a month is generated.
+
 **People → Teams:** directors open People on teams — one per manager, built
 from `reporting_lines` (someone with two managers is in both; managers can sit
 in another team) — with the total headcount and who isn't in a team. Clicking a
@@ -216,6 +226,7 @@ can start first. If you change one, change the other repo too.
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
 | `leave_requests`, `leave_quotas` | dashboard | dashboard |
 | `mbo_threads`, `mbo_entries` | dashboard | dashboard |
+| `punch_fixes` — approved missed-punch fixes (never written to `punches`) | dashboard | dashboard |
 | `payroll_salaries`, `payroll_recommendations`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
 
 ## Local dev with production data

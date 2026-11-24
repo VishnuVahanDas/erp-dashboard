@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.ajeet.attendance.AttendanceStore;
+import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
@@ -39,15 +40,17 @@ public class ApiServer {
     private final LeaveStore leave;
     private final MboStore mbo;
     private final PayrollStore payroll;
+    private final PunchFixStore punchFixes;
 
     public ApiServer(AttendanceStore attendance, AuthStore auth, SyncRequests sync, LeaveStore leave, MboStore mbo,
-                     PayrollStore payroll) {
+                     PayrollStore payroll, PunchFixStore punchFixes) {
         this.attendance = attendance;
         this.auth = auth;
         this.sync = sync;
         this.leave = leave;
         this.mbo = mbo;
         this.payroll = payroll;
+        this.punchFixes = punchFixes;
     }
 
     /** How long POST /api/sync waits for the agent before answering 202. */
@@ -248,6 +251,27 @@ public class ApiServer {
                 String[] parts = path.split("/");
                 mbo.respond(acct, Long.parseLong(parts[2]), parts[3], readJson(ex).path("body").asText(""));
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
+            // ---- missed-punch requests: anyone asks; a director or the person's manager decides
+            } else if (method.equals("GET") && path.equals("/punch-fixes/my")) {
+                AuthStore.Account acct = requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("fixes", mapper.valueToTree(punchFixes.mine(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/punch-fixes/team")) {
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("fixes", mapper.valueToTree(
+                        acct.has(AuthStore.DIRECTOR) ? punchFixes.all() : punchFixes.forTeam(acct.id()))));
+            } else if (method.equals("POST") && path.equals("/punch-fixes")) {
+                AuthStore.Account acct = requireAccount(ex);
+                JsonNode b = readJson(ex);
+                long id = punchFixes.request(acct, b.path("day").asText(""), b.path("in").asText(""),
+                        b.path("out").asText(""), b.path("reason").asText(""));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+            } else if (method.equals("POST") && path.matches("/punch-fixes/[0-9]+/(approve|reject|cancel)")) {
+                AuthStore.Account acct = requireAccount(ex);
+                String[] parts = path.split("/");
+                long id = Long.parseLong(parts[2]);
+                if (parts[3].equals("cancel")) punchFixes.cancel(acct, id);
+                else punchFixes.decide(acct, id, parts[3].equals("approve"), readJson(ex).path("note").asText(""));
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
             // ---- payroll: directors run it; managers read reportees' locked months; everyone their payslips
             } else if (method.equals("GET") && path.equals("/payroll/salaries")) {
                 // directors: everyone; managers: their reportees (scoped in the store)
@@ -337,7 +361,7 @@ public class ApiServer {
         } catch (AuthStore.AuthException e) {
             send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (ForbiddenException | LeaveStore.ForbiddenException | MboStore.ForbiddenException
-                 | PayrollStore.ForbiddenException e) {
+                 | PayrollStore.ForbiddenException | PunchFixStore.ForbiddenException e) {
             send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             send(ex, 400, mapper.createObjectNode().put("error", e.getMessage()));

@@ -1,6 +1,7 @@
 package org.ajeet;
 
 import org.ajeet.attendance.AttendanceStore;
+import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.config.Env;
 import org.ajeet.leave.LeaveStore;
@@ -38,6 +39,8 @@ public class Main {
         MboStore mbo = new MboStore(pgUrl, pgUser, pgPass);
         // after LeaveStore: payroll reads leave_requests and punches
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
-        new ApiServer(attendance, auth, sync, leave, mbo, payroll).start(port);
+        // after AuthStore: punch_fixes references accounts
+        PunchFixStore punchFixes = new PunchFixStore(pgUrl, pgUser, pgPass);
+        new ApiServer(attendance, auth, sync, leave, mbo, payroll, punchFixes).start(port);
     }
 }

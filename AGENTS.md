@@ -17,6 +17,7 @@ backend/   Java 24, Maven wrapper, no framework
     web/ApiServer.java           all REST routes (JDK com.sun.net.httpserver + Jackson)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
+    attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
     sync/SyncRequests.java       "Sync device" queue + agent heartbeat
     leave/LeaveStore.java        leave requests, approvals, yearly quotas (LTS)
     mbo/MboStore.java            MBO threads and entries
@@ -28,6 +29,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/mbo.jsx    MBO module UI + Performance panel
   src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/team.jsx   People → Teams view and the person details dialog
+  src/punchfix.jsx  missed-punch requests (employee) and approval queue (dashboard)
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
 docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinned to vyom-erp

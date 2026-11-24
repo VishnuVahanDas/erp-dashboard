@@ -7,6 +7,7 @@ import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave, makeBalanceOf } 
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 import { EmployeePayslips, OpsPayroll } from './payroll.jsx';
 import { PersonDialog, TeamsView } from './team.jsx';
+import { MyPunchFixes, PunchFixQueue } from './punchfix.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -383,6 +384,8 @@ function EmployeeView({ me, ctx }) {
         </div>
       </>)}
 
+      {tab === 'log' && <MyPunchFixes me={me} />}
+
       {linked && tab === 'log' && (
         <section className="panel">
           {Object.keys(days).length === 0 ? <Empty title="No history yet" hint="Your punches will appear here once synced." /> : (
@@ -668,6 +671,12 @@ function OpsView({ me, ctx, scope }) {
   const [leaveBalanceOf, setLeaveBalanceOf] = useState(null); // (accountId, year) -> balances
   const [mbos, setMbos] = useState([]);
 
+  const [fixes, setFixes] = useState([]);
+  const loadFixes = useCallback(async () => {
+    try { setFixes((await call('GET', '/api/punch-fixes/team', null, me.token)).fixes || []); }
+    catch (e) { setError(e.message); }
+  }, [me.token]);
+
   const loadMbo = useCallback(async () => {
     try {
       const d = await call('GET', isDirector ? '/api/mbo/all' : '/api/mbo/team', null, me.token);
@@ -711,11 +720,11 @@ function OpsView({ me, ctx, scope }) {
   }, [me.token, isDirector]);
 
   useEffect(() => {
-    load(); loadAgent(); loadLeave(); loadMbo();
+    load(); loadAgent(); loadLeave(); loadMbo(); loadFixes();
     // the agent auto-syncs in the background; keep the dashboard fresh
-    const t = setInterval(() => { load(); loadAgent(); loadLeave(); loadMbo(); }, 20000);
+    const t = setInterval(() => { load(); loadAgent(); loadLeave(); loadMbo(); loadFixes(); }, 20000);
     return () => clearInterval(t);
-  }, [load, loadAgent, loadLeave, loadMbo]);
+  }, [load, loadAgent, loadLeave, loadMbo, loadFixes]);
 
   const flash = (msg) => { setNotice(msg); setTimeout(() => setNotice(null), 5000); };
 
@@ -791,6 +800,7 @@ function OpsView({ me, ctx, scope }) {
                 foot={<button className="link" onClick={() => setTab('people')}>{isDirector ? 'Manage people →' : 'View team →'}</button>} />
         </div>
 
+        <PunchFixQueue me={me} fixes={fixes} reload={loadFixes} />
         {isDirector && <DashboardLeave me={me} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} onOpenAll={() => setTab('leave')} />}
 
         <div className="grid-2 wide-left">
