@@ -332,7 +332,9 @@ function SalaryDialog({ me, people, person, preset, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const gross = (Number(basic) || 0) + (Number(hra) || 0) + (Number(other) || 0);
   const day = gross / 30;
-  const verb = person ? 'Change salary' : 'Set salary';
+  // a preset from someone else's recommendation: saving approves it
+  const approving = !!preset && preset.by !== 'you';
+  const verb = person ? 'Change salary' : approving ? 'Approve & set salary' : 'Set salary';
 
   const submit = async (e) => {
     e.preventDefault();
@@ -342,7 +344,7 @@ function SalaryDialog({ me, people, person, preset, onClose, onDone }) {
         accountId: Number(accountId), basic: Number(basic) || 0, hra: Number(hra) || 0,
         otherAllowance: Number(other) || 0, effectiveFrom: from,
       }, me.token);
-      onDone(r.status === 'pending' ? 'Sent for approval' : 'Salary saved');
+      onDone(r.status === 'pending' ? 'Sent for approval' : approving ? `Approved — ${preset.name} is on payroll` : 'Salary saved');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -359,7 +361,7 @@ function SalaryDialog({ me, people, person, preset, onClose, onDone }) {
           </label>
         )}
         {person && <p className="muted">Now: <b>{money(person.gross)}</b> / month since {person.effectiveFrom}.</p>}
-        {preset && preset.by !== 'you' && <p className="muted">Recommended by <b>{preset.by}</b>{preset.note ? <> — “{preset.note}”</> : null}. Saving the salary accepts the recommendation.</p>}
+        {approving && <p className="muted">Recommended by <b>{preset.by}</b>{preset.note ? <> — “{preset.note}”</> : null}. Enter the salary to approve: they're on payroll from the effective date.</p>}
         <div className="form-grid">
           <label className="field"><span>Basic / month (₹)</span>
             <input type="number" min="0" step="0.01" required value={basic} onChange={(e) => setBasic(e.target.value)} autoFocus />
@@ -386,7 +388,7 @@ function SalaryDialog({ me, people, person, preset, onClose, onDone }) {
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy || !accountId || gross <= 0}>
-            {busy ? 'Saving…' : 'Save salary'}
+            {busy ? 'Saving…' : approving ? 'Approve' : 'Save salary'}
           </button>
         </div>
       </form>
@@ -569,7 +571,7 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
               {r.note ? <p title={r.note}>{r.note}</p> : <p className="dim">No note.</p>}
               <div className="leave-act">
                 <button className="btn danger small" onClick={() => setDeclining(r)}>Decline</button>
-                <button className="btn primary small" onClick={() => setAccepting(r)}><Icon name="money" size={15} />Set salary</button>
+                <button className="btn primary small" onClick={() => setAccepting(r)} title="Approve and set the salary"><Icon name="approve" size={15} />Approve</button>
               </div>
             </div>
           ))}
@@ -798,7 +800,7 @@ function TeamPanel({ me, people, flash, setError }) {
               <div className="leave-act">
                 <button className="btn danger small" onClick={() => setDeclining(r)}>Decline</button>
                 <button className="btn primary small" onClick={() => setSetting({ preset: { accountId: r.accountId, name: r.name, effectiveFrom: r.startDate, by: r.recommendedBy, note: r.note } })}>
-                  <Icon name="money" size={15} />Set salary
+                  <Icon name="approve" size={15} />Approve
                 </button>
               </div>
             </div>
