@@ -5,6 +5,7 @@ import {
 } from './ui.jsx';
 import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave, makeBalanceOf } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
+import { OpsPayroll } from './payroll.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -745,6 +746,7 @@ function OpsView({ me, ctx, scope }) {
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
     mbo: ['MBOs', isDirector ? 'Everyone · objectives & discussions' : 'Your team · objectives & discussions'],
+    payroll: ['Payroll', isDirector ? 'Salaries, holidays & monthly runs' : 'Your team · finalized months'],
   };
   const mboWaiting = mbos.filter((t) => myTurn(t, me)).length;
   const pendingLeave = leaves.filter((r) => r.status === 'pending' && r.accountId !== me.id).length;
@@ -758,6 +760,7 @@ function OpsView({ me, ctx, scope }) {
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
              { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
              { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
+             { key: 'payroll', label: 'Payroll', icon: 'money' },
            ]}
            actions={isDirector ? <>
              <AgentChip agent={agent} />
@@ -877,6 +880,7 @@ function OpsView({ me, ctx, scope }) {
 
       {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} />}
       {tab === 'mbo' && <OpsMbo me={me} isDirector={isDirector} threads={mbos} people={people} reload={loadMbo} />}
+      {tab === 'payroll' && <OpsPayroll me={me} isDirector={isDirector} people={people} />}
 
       {editing && (
         <PersonForm me={me} isDirector={isDirector} person={editing === 'new' ? null : editing}

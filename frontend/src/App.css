@@ -750,6 +750,20 @@ tbody tr:last-child td { border-bottom: none; }
   .mbo-msg-head { flex-wrap: wrap; }
 }
 
+.pay-sections { margin-bottom: 18px; }
+.pay-sections .role-pick { cursor: pointer; font: inherit; }
+.pay-sections .role-pick:not(.on) { background: transparent; }
+.pay-note { background: var(--saffron-soft); color: var(--saffron); margin-bottom: 14px; }
+.pay-flag { color: var(--saffron); }
+.pay-foot { margin-top: 8px; font-size: 12px; }
+.pay-days-sum { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
+.pay-days-sum b { color: var(--text); font-family: var(--mono); }
+.pay-days-sum .warn { color: var(--saffron); }
+.pay-days { max-height: 55vh; overflow-y: auto; margin-bottom: 12px; }
+.pay-day.sunday td, .pay-day.holiday td, .pay-day.before td, .pay-day.future td { color: var(--dim); }
+.pay-day.leave td:nth-child(2) { color: var(--cyan); }
+.pay-day.short td:last-child { color: var(--red); }
+
 @media (max-width: 1100px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
   .grid-2, .grid-2.wide-left { grid-template-columns: 1fr; gap: 0; }

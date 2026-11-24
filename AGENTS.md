@@ -26,6 +26,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views
   src/leave.jsx  leave module UI
   src/mbo.jsx    MBO module UI + Performance panel
+  src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
 docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinned to vyom-erp
