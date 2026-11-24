@@ -104,8 +104,8 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/leave` | signed in | `{category: personal\|sick, from, to, halfDay?: first\|second\|late\|early, hours?, reason}`; `hours` only for late/early |
 | POST | `/api/leave/{id}/approve`, `/reject` | reporting manager, director | `{note?}`; not your own request; first decision wins |
 | POST | `/api/leave/{id}/cancel` | owner, reporting manager, director | owner: pending, or approved and not started |
-| GET  | `/api/leave/team` | manager | reportees' requests |
-| GET  | `/api/leave/all` | director | everyone's requests |
+| GET  | `/api/leave/team` | manager | reportees' `requests`, plus `usage` (approved + pending days per person, year and category) and `quotas` |
+| GET  | `/api/leave/all` | director | everyone's `requests`, `usage` and `quotas` |
 | GET / PUT | `/api/leave/quotas` | signed in / director | `{personal, sick}` days per calendar year |
 
 **Leave (LTS):** Sundays inside a range don't count; a half-day is 0.5. A

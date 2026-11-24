@@ -170,10 +170,18 @@ public class ApiServer {
                 send(ex, 200, mapper.createObjectNode().put("ok", true));
             } else if (method.equals("GET") && path.equals("/leave/team")) {
                 AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
-                send(ex, 200, mapper.createObjectNode().set("requests", mapper.valueToTree(leave.forTeam(acct.id()))));
+                ObjectNode out = mapper.createObjectNode();
+                out.set("requests", mapper.valueToTree(leave.forTeam(acct.id())));
+                out.set("usage", mapper.valueToTree(leave.usageForTeam(acct.id())));
+                out.set("quotas", mapper.valueToTree(leave.quotas()));
+                send(ex, 200, out);
             } else if (method.equals("GET") && path.equals("/leave/all")) {
                 requireRole(ex, AuthStore.DIRECTOR);
-                send(ex, 200, mapper.createObjectNode().set("requests", mapper.valueToTree(leave.all())));
+                ObjectNode out = mapper.createObjectNode();
+                out.set("requests", mapper.valueToTree(leave.all()));
+                out.set("usage", mapper.valueToTree(leave.usageForAll()));
+                out.set("quotas", mapper.valueToTree(leave.quotas()));
+                send(ex, 200, out);
             } else if (method.equals("GET") && path.equals("/leave/quotas")) {
                 requireAccount(ex);
                 send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));

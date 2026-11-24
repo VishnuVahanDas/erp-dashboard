@@ -61,6 +61,9 @@ public class LeaveStore {
     /** Days for one category in one year. remaining = quota - used - pending. */
     public record Balance(String category, double quota, double used, double pending, double remaining) {}
 
+    /** Approved and pending days for one person, category and calendar year (approver views). */
+    public record Usage(long accountId, int year, String category, double used, double pending) {}
+
     /** What the employee submits. halfDay is one of PARTS; hours only for late/early. */
     public record LeaveInput(String category, String from, String to, String halfDay, Double hours, String reason) {}
 
@@ -124,6 +127,18 @@ public class LeaveStore {
 
     public synchronized List<LeaveRequest> all() throws IOException {
         return requests("true");
+    }
+
+    /** Usage of everyone who reports to this manager - same scope as forTeam. */
+    public synchronized List<Usage> usageForTeam(long managerId) throws IOException {
+        return usage("""
+                r.account_id <> ? AND r.account_id IN
+                    (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)""", managerId, managerId);
+    }
+
+    /** Everyone's usage - same scope as all(). */
+    public synchronized List<Usage> usageForAll() throws IOException {
+        return usage("true");
     }
 
     public synchronized Map<String, Double> quotas() throws IOException {
@@ -298,6 +313,28 @@ public class LeaveStore {
     }
 
     // --------------------------------------------------------------- helpers
+
+    /** One grouped query: approved + pending days per account / year / category. */
+    private List<Usage> usage(String where, Object... params) throws IOException {
+        List<Usage> out = new ArrayList<>();
+        String sql = """
+                SELECT r.account_id, EXTRACT(YEAR FROM r.from_date)::int, r.category,
+                       COALESCE(SUM(r.days) FILTER (WHERE r.status = 'approved'), 0),
+                       COALESCE(SUM(r.days) FILTER (WHERE r.status = 'pending'), 0)
+                FROM leave_requests r
+                WHERE r.status IN ('approved','pending')
+                """ + "AND " + where + " GROUP BY 1, 2, 3";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(new Usage(rs.getLong(1), rs.getInt(2), rs.getString(3),
+                        rs.getDouble(4), rs.getDouble(5)));
+            }
+        } catch (SQLException e) {
+            throw new IOException("leave usage query failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
 
     /**
      * Days in [from, to] excluding Sundays; a half-day is 0.5 and late/early is
