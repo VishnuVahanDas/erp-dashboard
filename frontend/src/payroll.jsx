@@ -294,7 +294,8 @@ function RunPanel({ me, isDirector, flash, setError }) {
       </div>
 
       <div className="stats">
-        <Stat label="People" value={lines.length} icon="team" foot={lines.some((l) => !l.linked) ? `${lines.filter((l) => !l.linked).length} not linked to the device` : 'all linked'} />
+        <Stat label="People" value={lines.length} icon="team"
+              foot={!lines.length ? 'no one in this month yet' : lines.some((l) => !l.linked) ? `${lines.filter((l) => !l.linked).length} not linked to the device` : 'all linked to the device'} />
         <Stat label="Gross" value={money(sum('gross'))} icon="money" foot="before cuts" />
         <Stat label="Cut for missed hours" value={money(sum('cut'))} accent={sum('cut') ? 'saffron' : ''} icon="clock"
               foot={`${hrs(lines.reduce((s, l) => s + totalHours(l), 0))} in total`} />
@@ -302,7 +303,9 @@ function RunPanel({ me, isDirector, flash, setError }) {
       </div>
 
       {status === 'draft' && <div className="inline pay-note">Draft — numbers update each time you regenerate (new punches, leave or holidays). Corrections are kept.</div>}
-      <LinesTable lines={lines} editable={isDirector && status === 'draft'} onDays={setDays} onCorrect={setCorrecting} />
+      {!isDirector && !runs.length
+        ? <Empty title="No finalized months yet" hint="Your team's pay shows here once a director finalizes a month. To put someone on payroll, use My team." />
+        : <LinesTable lines={lines} editable={isDirector && status === 'draft'} onDays={setDays} onCorrect={setCorrecting} />}
     </section>
 
     {days && <DaysDialog me={me} line={days} onClose={() => setDays(null)} />}
@@ -356,7 +359,7 @@ function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone 
           </label>
         )}
         {person && <p className="muted">Now: <b>{money(person.gross)}</b> / month since {person.effectiveFrom}.</p>}
-        {preset && <p className="muted">Recommended by <b>{preset.by}</b>{preset.note ? <> — “{preset.note}”</> : null}. Saving the salary accepts the recommendation.</p>}
+        {preset && preset.by !== 'you' && <p className="muted">Recommended by <b>{preset.by}</b>{preset.note ? <> — “{preset.note}”</> : null}. Saving the salary accepts the recommendation.</p>}
         <div className="form-grid">
           <label className="field"><span>Basic / month (₹)</span>
             <input type="number" min="0" step="0.01" required value={basic} onChange={(e) => setBasic(e.target.value)} autoFocus />
@@ -421,8 +424,8 @@ function RejectDialog({ me, row, onClose, onDone }) {
 }
 
 /** Manager: ask for a team member to be put on payroll; a director sets the amount. */
-function RecommendDialog({ me, people, onClose, onDone }) {
-  const [accountId, setAccountId] = useState(people.length === 1 ? String(people[0].id) : '');
+function RecommendDialog({ me, people, preselect, onClose, onDone }) {
+  const [accountId, setAccountId] = useState(preselect ? String(preselect) : people.length === 1 ? String(people[0].id) : '');
   const [start, setStart] = useState(new Date().toLocaleDateString('sv'));
   const [note, setNote] = useState('');
   const [error, setError] = useState(null);
@@ -704,6 +707,147 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
   </>);
 }
 
+/* --------------------------------------------------------- manager team */
+
+/**
+ * Manager's "My team": every reportee with their payroll status, and the way
+ * to add one to payroll (recommend to a director) or propose a change.
+ */
+function TeamPanel({ me, people, flash, setError }) {
+  const [rows, setRows] = useState([]);
+  const [recs, setRecs] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [recommend, setRecommend] = useState(null); // null | 'pick' | accountId
+  const [proposing, setProposing] = useState(null); // null | {person?, preset?}
+  const load = useCallback(async () => {
+    try {
+      const [sal, rec] = await Promise.all([
+        call('GET', '/api/payroll/salaries', null, me.token),
+        call('GET', '/api/payroll/recommendations', null, me.token),
+      ]);
+      setRows(sal.salaries || []);
+      setRecs(rec.recommendations || []);
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [me.token, setError]);
+  useEffect(() => { load(); }, [load]);
+
+  // one row per reportee (the team list has a row per project line), never yourself
+  const team = useMemo(() => {
+    const map = new Map();
+    for (const p of people) {
+      if (p.id === me.id || (p.status ?? 'active') !== 'active') continue;
+      const had = map.get(p.id);
+      map.set(p.id, had ? { ...had, projects: [...had.projects, p.project].filter(Boolean) } : { ...p, projects: [p.project].filter(Boolean) });
+    }
+    return [...map.values()].sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+  }, [people, me.id]);
+
+  // payroll state per person: rows/recs come newest first
+  const stateOf = (id) => {
+    const salary = rows.find((r) => r.accountId === id && r.status === 'approved');
+    const proposal = rows.find((r) => r.accountId === id && r.status === 'pending');
+    const rec = recs.find((r) => r.accountId === id && r.status === 'pending');
+    const lastNo = [...rows.filter((r) => r.accountId === id && r.status === 'rejected'),
+      ...recs.filter((r) => r.accountId === id && r.status === 'declined')]
+      .sort((a, b) => (b.decidedAt || 0) - (a.decidedAt || 0))[0];
+    return { salary, proposal, rec, lastNo };
+  };
+  const states = team.map((p) => ({ p, ...stateOf(p.id) }));
+  const addable = states.filter((x) => !x.salary && !x.proposal && !x.rec).map((x) => x.p);
+  const onPayroll = states.filter((x) => x.salary).length;
+  const waiting = states.filter((x) => x.proposal || x.rec).length;
+  const done = (m) => { setRecommend(null); setProposing(null); flash(m); load(); };
+  const mine = recs.filter((r) => team.some((p) => p.id === r.accountId));
+
+  if (!loaded) return <p className="muted">Loading…</p>;
+  return (<>
+    <div className="stats">
+      <Stat label="Reportees" value={team.length} icon="team" foot="people who report to you" />
+      <Stat label="On payroll" value={onPayroll} accent="cyan" icon="money" foot="salary set by a director" />
+      <Stat label="Waiting for a director" value={waiting} accent={waiting ? 'saffron' : ''} icon="clock" foot="recommended or proposed" />
+      <Stat label="Not on payroll" value={addable.length} accent={addable.length ? 'alert' : ''} icon="user"
+            foot={addable.length ? 'add them below' : 'everyone is covered'} />
+    </div>
+
+    <section className="panel">
+      <div className="panel-head">
+        <h3>My team</h3>
+        <button className="btn primary" onClick={() => setRecommend('pick')} disabled={!addable.length}
+                title={addable.length ? 'Pick a reportee and recommend them to a director' : 'Everyone in your team is on payroll or waiting'}>
+          <Icon name="plus" />Add reportee to payroll
+        </button>
+      </div>
+      {!team.length ? (
+        <Empty title="No one reports to you yet" hint="Ask a director to set you as someone's reporting manager, or add an employee from My team." />
+      ) : (
+        <div className="table-wrap">
+          <table className="leave-table">
+            <thead><tr><th>Reportee</th><th>Device</th><th>Payroll</th><th>Salary / month</th><th /></tr></thead>
+            <tbody>
+              {states.map(({ p, salary, proposal, rec, lastNo }) => (
+                <tr key={p.id}>
+                  <td><div className="who"><Avatar label={p.name || p.email} /><span>{p.name || p.email}<small>{p.email}{p.projects.length ? ` · ${p.projects.join(', ')}` : ''}</small></span></div></td>
+                  <td>{p.enrollNumber != null ? <span className="mono dim">#{p.enrollNumber}</span> : <span className="pay-flag">not linked</span>}</td>
+                  <td>
+                    {rec ? <span className="pill warn">Recommended — waiting</span>
+                      : proposal ? <span className="pill warn">Salary proposed — waiting</span>
+                      : salary ? <span className="pill live">On payroll</span>
+                      : <span className="pill idle">Not on payroll</span>}
+                    {rec && <small className="sub">by {rec.recommendedBy} · {fmtStamp(rec.createdAt)}</small>}
+                    {proposal && <small className="sub">{money(proposal.gross)} from {proposal.effectiveFrom}</small>}
+                    {!rec && !proposal && lastNo && (
+                      <small className="sub pay-rejected" title={lastNo.decisionNote}>
+                        {lastNo.status === 'declined' ? 'recommendation declined' : 'proposal rejected'}: “{lastNo.decisionNote}”</small>
+                    )}
+                  </td>
+                  <td className="mono">{salary ? <>{money(salary.gross)}<small className="sub">since {salary.effectiveFrom}</small></> : <span className="dim">—</span>}</td>
+                  <td className="row-act"><div className="leave-act">
+                    {!salary && !proposal && !rec && (<>
+                      <button className="btn ghost small" onClick={() => setProposing({ preset: { accountId: p.id, name: p.name || p.email } })}
+                              title="Suggest the amount yourself">Propose a salary</button>
+                      <button className="btn primary small" onClick={() => setRecommend(p.id)}><Icon name="plus" size={14} />Add to payroll</button>
+                    </>)}
+                    {salary && !proposal && (
+                      <button className="btn ghost small" onClick={() => setProposing({ person: salary })}><Icon name="edit" size={14} />Propose change</button>
+                    )}
+                  </div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <small className="dim pay-foot"><b>Add to payroll</b> recommends the person to a director, who sets the salary.
+        <b> Propose a salary</b> does the same with an amount you suggest. Nobody is paid until a director approves.</small>
+    </section>
+
+    {mine.length > 0 && (
+      <section className="panel">
+        <div className="panel-head"><h3>Your recommendations</h3><span className="muted">{mine.filter((r) => r.status === 'pending').length} waiting</span></div>
+        <ul className="perf-list">
+          {mine.slice(0, 20).map((r) => (
+            <li key={r.id}>
+              <span><b>{r.name}</b>
+                <small>recommended {fmtStamp(r.createdAt)}{r.startDate ? ` · start ${r.startDate}` : ''}{r.note ? ` · “${r.note}”` : ''}</small>
+                {r.status !== 'pending' && <small className={r.status === 'declined' ? 'pay-rejected' : ''}>
+                  {r.status} by {r.decidedBy || '—'} {fmtStamp(r.decidedAt)}{r.decisionNote ? ` — “${r.decisionNote}”` : ''}</small>}
+              </span>
+              <span className={`pill ${REC_PILL[r.status]}`}>{REC_LABEL[r.status]}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {recommend && <RecommendDialog me={me} people={addable} preselect={recommend === 'pick' ? null : recommend}
+                                   onClose={() => setRecommend(null)} onDone={done} />}
+    {proposing && <SalaryDialog me={me} isDirector={false} people={[]} person={proposing.person || null}
+                                preset={proposing.preset ? { ...proposing.preset, by: 'you' } : null}
+                                onClose={() => setProposing(null)} onDone={done} />}
+  </>);
+}
+
 /* ------------------------------------------------------------ holidays */
 
 function HolidaysPanel({ me, flash, setError }) {
@@ -760,7 +904,7 @@ function HolidaysPanel({ me, flash, setError }) {
 
 /** Director: run / salaries / holidays. Manager: read-only locked months of their reportees. */
 export function OpsPayroll({ me, isDirector, people }) {
-  const [section, setSection] = useState('run');
+  const [section, setSection] = useState(isDirector ? 'run' : 'team');
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
   const [waiting, setWaiting] = useState(0); // salary proposals waiting for a director
@@ -773,7 +917,7 @@ export function OpsPayroll({ me, isDirector, people }) {
   }, [isDirector, me.token]);
   const sections = isDirector
     ? [['run', 'Monthly payroll'], ['salaries', 'Salaries'], ['holidays', 'Holidays']]
-    : [['run', 'Monthly payroll'], ['salaries', 'Salaries']];
+    : [['team', 'My team'], ['run', 'Monthly payroll']];
 
   return (<>
     <Toasts notice={notice} error={error} onClose={() => setError(null)} />
@@ -785,8 +929,9 @@ export function OpsPayroll({ me, isDirector, people }) {
       ))}
     </div>
     {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} />}
-    {section === 'salaries' && <SalariesPanel me={me} isDirector={isDirector} people={people} flash={flash}
-                                              setError={setError} onPending={isDirector ? setWaiting : undefined} />}
+    {isDirector && section === 'salaries' && <SalariesPanel me={me} isDirector people={people} flash={flash}
+                                                            setError={setError} onPending={setWaiting} />}
+    {!isDirector && section === 'team' && <TeamPanel me={me} people={people} flash={flash} setError={setError} />}
     {isDirector && section === 'holidays' && <HolidaysPanel me={me} flash={flash} setError={setError} />}
     {!isDirector && section === 'run' && <p className="dim pay-foot">You see your reportees' pay once a director finalizes the month.</p>}
   </>);
