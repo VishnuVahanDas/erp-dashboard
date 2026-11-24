@@ -156,7 +156,9 @@ public class ApiServer {
                 JsonNode b = readJson(ex);
                 long id = leave.apply(acct, new LeaveStore.LeaveInput(
                         b.path("category").asText(""), b.path("from").asText(""), b.path("to").asText(""),
-                        b.path("halfDay").asText(""), b.path("reason").asText("")));
+                        b.path("halfDay").asText(""),
+                        b.hasNonNull("hours") && b.get("hours").isNumber() ? b.get("hours").asDouble() : null,
+                        b.path("reason").asText("")));
                 send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
             } else if (method.equals("POST") && path.matches("/leave/\\d+/(approve|reject|cancel)")) {
                 AuthStore.Account acct = requireAccount(ex);
