@@ -22,7 +22,7 @@ web-dashboard/
 │       ├── leave/LeaveStore.java           leave requests, approvals, yearly quotas (LTS)
 │       ├── mbo/MboStore.java               MBO discussions: propose / acknowledge / deny / suggest
 │       └── config/Env.java                 env / .env lookup
-└── frontend/            React 18 + Vite (Node 22, see .nvmrc)
+└── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
 
 ## Development
@@ -129,6 +129,12 @@ acknowledges (closed, agreed), denies (closed, not agreed) or suggests changes
 (turn flips back). Entries are never edited or deleted, so the trail can back
 promotion reviews.
 
+Managers and directors also get a **Performance** panel on the MBO tab: per
+employee, over a chosen period, the objectives agreed, agreement rate, MBOs they
+raised themselves, average reply time and anything waiting on them, plus "Most
+agreed", "Most initiative" and "Quickest replies" badges. It is computed in the
+browser from the threads the tab already loads; there is no extra API.
+
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
 
@@ -149,15 +155,24 @@ can start first. If you change one, change the other repo too.
 
 ## Local dev with production data
 
-`db/vyom_erp.sql` is a snapshot of the production database (login sessions excluded).
-To load it into your local docker Postgres (this replaces the local tables):
+The `db/` folder is **git-ignored and must never be committed**: a production
+snapshot holds personal data and password hashes. It was once committed by
+mistake and had to be purged from the repo history. Keep dumps on your machine
+only, and pass them around by a private channel, never through git.
+
+To take a snapshot on the VPS (login sessions excluded), then copy it to
+`db/vyom_erp.sql` on your machine:
 
 ```bash
-./db/restore.sh
+docker exec vyom-erp-db-1 sh -c 'pg_dump -U $POSTGRES_USER -d $POSTGRES_DB --no-owner --no-privileges --clean --if-exists --exclude-table-data=sessions' > vyom_erp.sql
 ```
 
-To refresh the snapshot on the VPS:
+To load it into your local docker Postgres (this replaces the local tables),
+start the database and pipe the dump in:
 
 ```bash
-docker exec vyom-erp-db-1 sh -c 'pg_dump -U $POSTGRES_USER -d $POSTGRES_DB --no-owner --no-privileges --clean --if-exists --exclude-table-data=sessions' > db/vyom_erp.sql
+docker compose up -d db
+docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U vyom -d vyom_erp < db/vyom_erp.sql
 ```
+
+Then log in with your production credentials.
