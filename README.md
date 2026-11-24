@@ -172,6 +172,8 @@ starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
 a finalized month can't change. Each line stores its day-by-day breakdown as
 generated, so a payslip doesn't change if punches are re-synced later.
+Employees see finalized months in a **Payslips** tab (print / save as PDF from
+the browser); directors can export a month as CSV for the bank or accountant.
 
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.

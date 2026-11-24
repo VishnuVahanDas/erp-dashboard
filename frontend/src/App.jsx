@@ -5,7 +5,7 @@ import {
 } from './ui.jsx';
 import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave, makeBalanceOf } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
-import { OpsPayroll } from './payroll.jsx';
+import { EmployeePayslips, OpsPayroll } from './payroll.jsx';
 
 const TOKEN_KEY = 'attendance_token';
 const roleKey = (id) => `vyom_role_${id}`;
@@ -311,14 +311,16 @@ function EmployeeView({ me, ctx }) {
              { key: 'log', label: 'Flight log', icon: 'log' },
              { key: 'leave', label: 'Leave', icon: 'calendar' },
              { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
+             { key: 'payslips', label: 'Payslips', icon: 'money' },
            ]}
-           subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Objectives & discussions' }[tab] || 'Personal history'}
-           title={{ home: name, leave: 'My leave', mbo: 'My MBOs' }[tab] || 'My flight log'}>
+           subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Objectives & discussions', payslips: 'Payroll' }[tab] || 'Personal history'}
+           title={{ home: name, leave: 'My leave', mbo: 'My MBOs', payslips: 'My payslips' }[tab] || 'My flight log'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
       {tab === 'home' && <LeaveBalance me={me} />}
       {tab === 'leave' && <EmployeeLeave me={me} />}
       {tab === 'mbo' && <EmployeeMbo me={me} threads={mbos} reload={loadMbo} />}
+      {tab === 'payslips' && <EmployeePayslips me={me} />}
 
       {!linked && (tab === 'home' || tab === 'log') && (
         <section className="panel">

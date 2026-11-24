@@ -76,6 +76,36 @@ export function DaysDialog({ me, line, onClose }) {
   );
 }
 
+/* ----------------------------------------------------------------- csv */
+
+const CSV_COLS = [
+  ['Month', (l) => l.month], ['Name', (l) => l.name], ['Email', (l) => l.email],
+  ['Linked to device', (l) => (l.linked ? 'yes' : 'no')], ['Working days', (l) => l.workingDays],
+  ['Missed hours', (l) => l.missedHours], ['Correction hours', (l) => l.correctionHours],
+  ['Correction note', (l) => l.correctionNote], ['Basic', (l) => l.basic], ['HRA', (l) => l.hra],
+  ['Other allowance', (l) => l.otherAllowance], ['Monthly gross', (l) => l.fullGross],
+  ['Gross this month', (l) => l.gross], ['Day rate', (l) => l.dayRate], ['Hour rate', (l) => l.hourRate],
+  ['Cut', (l) => l.cut], ['Net pay', (l) => l.net],
+];
+const csvCell = (v) => {
+  const s = String(v ?? '');
+  // a leading = + - @ in text would run as a formula in Excel
+  const safe = /^[=+\-@]/.test(s) && Number.isNaN(Number(s)) ? `'${s}` : s;
+  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+};
+
+/** Builds the month's CSV in the browser and downloads it. */
+function downloadCsv(month, lines) {
+  const rows = [CSV_COLS.map(([h]) => h), ...lines.map((l) => CSV_COLS.map(([, f]) => f(l)))];
+  const text = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([`﻿${text}`], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `payroll-${month}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 /* ---------------------------------------------------------- run dialogs */
 
 function CorrectionDialog({ me, line, onClose, onDone }) {
@@ -193,7 +223,7 @@ function LinesTable({ lines, editable, onDays, onCorrect }) {
   );
 }
 
-function RunPanel({ me, isDirector, flash, setError, extraActions }) {
+function RunPanel({ me, isDirector, flash, setError }) {
   const [runs, setRuns] = useState([]);
   const [month, setMonth] = useState(prevMonth());
   const [lines, setLines] = useState([]);
@@ -256,7 +286,11 @@ function RunPanel({ me, isDirector, flash, setError, extraActions }) {
           </button>
         )}
         {isDirector && status === 'finalized' && <button className="btn primary" onClick={() => setPaying(true)}>Mark paid</button>}
-        {extraActions?.({ month, lines, status })}
+        {isDirector && lines.length > 0 && (
+          <button className="btn ghost" onClick={() => downloadCsv(month, lines)} title="Download this month for the bank or accountant">
+            Export CSV
+          </button>
+        )}
       </div>
 
       <div className="stats">
@@ -471,7 +505,7 @@ function HolidaysPanel({ me, flash, setError }) {
 /* ---------------------------------------------------------------- tabs */
 
 /** Director: run / salaries / holidays. Manager: read-only locked months of their reportees. */
-export function OpsPayroll({ me, isDirector, people, extraActions }) {
+export function OpsPayroll({ me, isDirector, people }) {
   const [section, setSection] = useState('run');
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
@@ -486,9 +520,94 @@ export function OpsPayroll({ me, isDirector, people, extraActions }) {
         ))}
       </div>
     )}
-    {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} extraActions={extraActions} />}
+    {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} />}
     {isDirector && section === 'salaries' && <SalariesPanel me={me} people={people} flash={flash} setError={setError} />}
     {isDirector && section === 'holidays' && <HolidaysPanel me={me} flash={flash} setError={setError} />}
     {!isDirector && <p className="dim pay-foot">You see your reportees' pay once a director finalizes the month.</p>}
+  </>);
+}
+
+/* ------------------------------------------------------------ payslips */
+
+function Payslip({ p, onDays }) {
+  const prorated = p.gross < p.fullGross;
+  return (
+    <article className="payslip">
+      <header className="payslip-head">
+        <div><b>VYOM DRONES</b><span>Payslip · {monthLabel(p.month)}</span></div>
+        <StatusPill status={p.status} />
+      </header>
+      <div className="payslip-who">
+        <div><span>Employee</span><b>{p.name}</b><small>{p.email}</small></div>
+        <div><span>Working days counted</span><b>{p.workingDays}</b><small>{p.paidOn ? `paid on ${p.paidOn}` : 'not paid yet'}</small></div>
+      </div>
+      <div className="payslip-cols">
+        <section>
+          <h4>Earnings</h4>
+          <dl>
+            <dt>Basic</dt><dd>{money(p.basic)}</dd>
+            <dt>HRA</dt><dd>{money(p.hra)}</dd>
+            <dt>Other allowance</dt><dd>{money(p.otherAllowance)}</dd>
+            {prorated && <><dt>Joined mid-month</dt><dd>− {money(p.fullGross - p.gross)}</dd></>}
+            <dt className="tot">Gross</dt><dd className="tot">{money(p.gross)}</dd>
+          </dl>
+        </section>
+        <section>
+          <h4>Deductions</h4>
+          <dl>
+            <dt>Missed hours</dt><dd>{hrs(p.missedHours)}</dd>
+            {p.correctionHours !== 0 && <><dt>Correction</dt><dd>{p.correctionHours > 0 ? '+' : ''}{hrs(p.correctionHours)}</dd></>}
+            <dt>Rate</dt><dd>{hrs(totalHours(p))} × {money(p.hourRate)}</dd>
+            <dt className="tot">Cut</dt><dd className="tot">− {money(p.cut)}</dd>
+          </dl>
+          {p.correctionNote && <p className="payslip-note">“{p.correctionNote}”</p>}
+        </section>
+      </div>
+      <footer className="payslip-net"><span>Net pay</span><b>{money(p.net)}</b></footer>
+      <small className="dim payslip-rule">Day rate = gross ÷ days in {monthLabel(p.month)} = {money(p.dayRate)}; hour rate = day rate ÷ 8.
+        Sundays, holidays and approved leave are paid.</small>
+      <div className="leave-act no-print">
+        <button className="btn ghost small" onClick={() => onDays(p)}><Icon name="calendar" size={15} />Attendance</button>
+        <button className="btn primary small" onClick={() => window.print()}><Icon name="log" size={15} />Print / save PDF</button>
+      </div>
+    </article>
+  );
+}
+
+/** Employee "Payslips" tab: own finalized / paid months. */
+export function EmployeePayslips({ me }) {
+  const [list, setList] = useState(null);
+  const [month, setMonth] = useState(null);
+  const [days, setDays] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    call('GET', '/api/payroll/my', null, me.token)
+      .then((d) => { setList(d.payslips || []); if (d.payslips?.length) setMonth(d.payslips[0].month); })
+      .catch((e) => { setList([]); setError(e.message); });
+  }, [me.token]);
+  const p = list?.find((x) => x.month === month);
+
+  return (<>
+    <Toasts error={error} onClose={() => setError(null)} />
+    {!list ? <p className="muted">Loading…</p> : !list.length ? (
+      <section className="panel"><Empty title="No payslips yet" hint="A payslip appears here once a director finalizes the month." /></section>
+    ) : (<>
+      <div className="stats">
+        <Stat label="Latest net pay" value={money(list[0].net)} accent="cyan" icon="money" foot={monthLabel(list[0].month)} />
+        <Stat label="Latest cut" value={money(list[0].cut)} accent={list[0].cut ? 'saffron' : ''} icon="clock"
+              foot={`${hrs(totalHours(list[0]))} missed`} />
+        <Stat label="Payslips" value={list.length} icon="log" foot="finalized months" />
+      </div>
+      <section className="panel">
+        <div className="panel-head">
+          <h3>Payslip</h3>
+          <select className="date" value={month} onChange={(e) => setMonth(e.target.value)} style={{ width: 'auto' }}>
+            {list.map((x) => <option key={x.month} value={x.month}>{monthLabel(x.month)} · {money(x.net)}</option>)}
+          </select>
+        </div>
+        {p && <Payslip p={p} onDays={setDays} />}
+      </section>
+    </>)}
+    {days && <DaysDialog me={me} line={days} onClose={() => setDays(null)} />}
   </>);
 }
