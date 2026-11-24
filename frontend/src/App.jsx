@@ -3,7 +3,7 @@ import {
   Avatar, DroneMark, Empty, Icon, Modal, Stat, Toasts, call, dayOf, fmtDuration, greeting, groupByDay, hhmm,
   minutesBetween, roster, ThemeToggle, todayStr,
 } from './ui.jsx';
-import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave } from './leave.jsx';
+import { DashboardLeave, EmployeeLeave, LeaveBalance, OpsLeave, makeBalanceOf } from './leave.jsx';
 import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 
 const TOKEN_KEY = 'attendance_token';
@@ -659,6 +659,7 @@ function OpsView({ me, ctx, scope }) {
   const [pq, setPq] = useState('');
   const [editing, setEditing] = useState(null); // null | 'new' | person
   const [leaves, setLeaves] = useState([]);
+  const [leaveBalanceOf, setLeaveBalanceOf] = useState(null); // (accountId, year) -> balances
   const [mbos, setMbos] = useState([]);
 
   const loadMbo = useCallback(async () => {
@@ -672,6 +673,7 @@ function OpsView({ me, ctx, scope }) {
     try {
       const d = await call('GET', isDirector ? '/api/leave/all' : '/api/leave/team', null, me.token);
       setLeaves(d.requests || []);
+      setLeaveBalanceOf(() => makeBalanceOf(d.usage, d.quotas));
     } catch (e) { setError(e.message); }
   }, [me.token, isDirector]);
 
@@ -781,7 +783,7 @@ function OpsView({ me, ctx, scope }) {
                 foot={<button className="link" onClick={() => setTab('people')}>{isDirector ? 'Manage people →' : 'View team →'}</button>} />
         </div>
 
-        {isDirector && <DashboardLeave me={me} requests={leaves} reload={loadLeave} onOpenAll={() => setTab('leave')} />}
+        {isDirector && <DashboardLeave me={me} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} onOpenAll={() => setTab('leave')} />}
 
         <div className="grid-2 wide-left">
           <section className="panel">
@@ -873,7 +875,7 @@ function OpsView({ me, ctx, scope }) {
         </section>
       )}
 
-      {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} reload={loadLeave} />}
+      {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} />}
       {tab === 'mbo' && <OpsMbo me={me} isDirector={isDirector} threads={mbos} people={people} reload={loadMbo} />}
 
       {editing && (

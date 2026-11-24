@@ -251,6 +251,41 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
   );
 }
 
+/* ------------------------------------------------------- approver balance */
+
+/**
+ * (accountId, year) -> per-category balance, from the usage rows the
+ * team/all endpoints return. remaining counts pending requests as booked,
+ * the same way the employee's own tiles do.
+ */
+export function makeBalanceOf(usage, quotas) {
+  const rows = new Map();
+  for (const u of usage || []) rows.set(`${u.accountId}|${u.year}|${u.category}`, u);
+  return (accountId, year) => Object.keys(CATS).map((c) => {
+    const u = rows.get(`${accountId}|${year}|${c}`);
+    const quota = quotas?.[c] ?? 0;
+    const used = u?.used ?? 0;
+    const pending = u?.pending ?? 0;
+    return { category: c, quota, used, pending, remaining: quota - used - pending };
+  });
+}
+
+/** "Personal 8 / 12 left · Sick 5 / 6 left" for one employee, in the request's year. */
+function BalanceChips({ balanceOf, r }) {
+  if (!balanceOf) return null;
+  const year = +r.from.slice(0, 4);
+  return (
+    <div className="bal-chips" title={`Leave left in ${year}, counting pending requests (including this one)`}>
+      {balanceOf(r.accountId, year).map((b) => (
+        <span key={b.category} className={`bal-chip ${b.category} ${b.remaining <= 0 ? 'out' : ''}`}>
+          {CATS[b.category].label} <b>{num(b.remaining)}</b> / {b.quota} left
+          {b.pending > 0 && <small> · {num(b.pending)} pending</small>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------- history */
 
 function StatusPill({ r }) {
@@ -388,7 +423,7 @@ export function EmployeeLeave({ me }) {
 
 /* ------------------------------------------------------------ approvers */
 
-function DecideDialog({ me, req, approve, onClose, onDone }) {
+function DecideDialog({ me, req, approve, balanceOf, onClose, onDone }) {
   const [note, setNote] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -410,6 +445,7 @@ function DecideDialog({ me, req, approve, onClose, onDone }) {
         <div className="leave-card flat">
           <div className="leave-what"><span className={`cat-tag ${req.category}`}>{CATS[req.category].label}</span><b>{range(req)}</b><span className="muted">{fmtAmount(req)}</span></div>
           <p>{req.reason}</p>
+          <BalanceChips balanceOf={balanceOf} r={req} />
         </div>
         <label className="field">
           <span>Note to {req.name.split(' ')[0]} {approve && <em className="dim">(optional)</em>}</span>
@@ -474,7 +510,7 @@ function QuotaDialog({ me, onClose, onDone }) {
  * same Approve / Reject actions as the Leave tab, who's away, and shortcuts.
  * The full Leave tab (OpsLeave) is unchanged.
  */
-export function DashboardLeave({ me, requests, reload, onOpenAll }) {
+export function DashboardLeave({ me, requests, balanceOf, reload, onOpenAll }) {
   const [deciding, setDeciding] = useState(null); // { req, approve }
   const [quotas, setQuotas] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -513,6 +549,7 @@ export function DashboardLeave({ me, requests, reload, onOpenAll }) {
               <div className="who"><Avatar label={r.name} /><span>{r.name}<small>applied {fmtStamp(r.appliedAt)}</small></span></div>
               <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtAmount(r)}</span></div>
               <p title={r.reason}>{r.reason}</p>
+              <BalanceChips balanceOf={balanceOf} r={r} />
               <div className="leave-act">
                 <button className="btn danger small" onClick={() => setDeciding({ req: r, approve: false })}>Reject</button>
                 <button className="btn primary small" onClick={() => setDeciding({ req: r, approve: true })}><Icon name="approve" size={15} />Approve</button>
@@ -525,7 +562,7 @@ export function DashboardLeave({ me, requests, reload, onOpenAll }) {
         )}
       </>)}
 
-      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} onClose={() => setDeciding(null)}
+      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
                                  onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
       {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
     </section>
@@ -536,7 +573,7 @@ export function DashboardLeave({ me, requests, reload, onOpenAll }) {
  * Manager/director "Leave" tab. requests are the reportees' (manager) or
  * everyone's (director); the parent loads them so the nav can show a count.
  */
-export function OpsLeave({ me, isDirector, requests, reload }) {
+export function OpsLeave({ me, isDirector, requests, balanceOf, reload }) {
   const [deciding, setDeciding] = useState(null); // { req, approve }
   const [quotas, setQuotas] = useState(false);
   const [status, setStatus] = useState('');
@@ -582,6 +619,7 @@ export function OpsLeave({ me, isDirector, requests, reload }) {
               <div className="who"><Avatar label={r.name} /><span>{r.name}<small>applied {fmtStamp(r.appliedAt)}</small></span></div>
               <div className="leave-what"><span className={`cat-tag ${r.category}`}>{CATS[r.category].label}</span><b>{range(r)}</b><span className="muted">{fmtAmount(r)}</span></div>
               <p title={r.reason}>{r.reason}</p>
+              <BalanceChips balanceOf={balanceOf} r={r} />
               {r.accountId === me.id ? <span className="dim">Your own request — another approver decides it.</span> : (
                 <div className="leave-act">
                   <button className="btn danger small" onClick={() => setDeciding({ req: r, approve: false })}>Reject</button>
@@ -609,7 +647,7 @@ export function OpsLeave({ me, isDirector, requests, reload }) {
                   )} />
     </section>
 
-    {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} onClose={() => setDeciding(null)}
+    {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
                                onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
     {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
   </>);

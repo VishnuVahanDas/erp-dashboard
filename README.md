@@ -119,7 +119,9 @@ days, and can't cross into a new year. Quotas default to 12 personal / 6 sick.
 The director's **Dashboard** has a leave panel: pending requests with Approve /
 Reject, who is on leave today, upcoming approved leave, and shortcuts to the
 quotas and the full Leave requests tab. Employees see their leave balance on
-their home page.
+their home page. Approvers see the employee's Personal and Sick balance (for
+the request's year, pending counted as booked) on each pending request and in
+the Approve / Reject dialog.
 
 | Method | Path | Who | Notes |
 |---|---|---|---|

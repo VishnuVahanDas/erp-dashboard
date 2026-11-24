@@ -657,6 +657,18 @@ tbody tr:last-child td { border-bottom: none; }
 .leave-card.flat p { -webkit-line-clamp: unset; white-space: pre-wrap; }
 .leave-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 
+.bal-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.leave-card.flat .bal-chips { margin-top: 10px; }
+.bal-chip {
+  font-size: 12px; padding: 4px 9px; border-radius: 8px; color: var(--muted);
+  border: 1px solid var(--line-strong); background: rgba(var(--tint-rgb), 0.03);
+}
+.bal-chip b { font-family: var(--mono); color: var(--text); }
+.bal-chip.personal b { color: var(--cyan); }
+.bal-chip.sick b { color: var(--blue); }
+.bal-chip small { color: var(--dim); }
+.bal-chip.out { border-color: rgba(var(--red-rgb), 0.45); background: var(--red-soft); }
+.bal-chip.out b { color: var(--red); }
 .dash-leave-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: -4px 0 16px; font-size: 13px; color: var(--muted); }
 .dash-leave-facts b { color: var(--text); font-family: var(--mono); margin-right: 4px; }
 .dash-leave-facts .warn b { color: var(--saffron); }
