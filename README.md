@@ -151,6 +151,9 @@ browser from the threads the tab already loads; there is no extra API.
 |---|---|---|---|
 | GET / POST | `/api/payroll/salaries` | director, manager | salary rows with `status` (managers: their reportees) / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds a row → `status` approved (director) or pending (manager) |
 | POST | `/api/payroll/salaries/{id}/approve`, `/reject` | director | `{note}` (required to reject); pending proposals only, first decision wins |
+| GET  | `/api/payroll/recommendations` | director, manager | recommendations (managers: their reportees) with `status` pending/accepted/declined |
+| POST | `/api/payroll/recommendations` | manager (reportees only) | `{accountId, startDate?, note?}` — put someone on payroll without an amount |
+| POST | `/api/payroll/recommendations/{id}/decline` | director | `{note}` required |
 | GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
 | POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
 | GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
@@ -172,7 +175,10 @@ is running, only days up to yesterday count. Someone whose first salary row
 starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
 managers can propose a salary or a change for their reportees, which counts
-only once a director approves it (one waiting proposal per person);
+only once a director approves it (one waiting proposal per person); or
+recommend a reportee who isn't on payroll yet without naming an amount — a
+director accepts by setting the salary (which closes the recommendation) or
+declines with a reason;
 a finalized month can't change. Each line stores its day-by-day breakdown as
 generated, so a payslip doesn't change if punches are re-synced later.
 Employees see finalized months in a **Payslips** tab (print / save as PDF from
@@ -195,7 +201,7 @@ can start first. If you change one, change the other repo too.
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
 | `leave_requests`, `leave_quotas` | dashboard | dashboard |
 | `mbo_threads`, `mbo_entries` | dashboard | dashboard |
-| `payroll_salaries`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
+| `payroll_salaries`, `payroll_recommendations`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
 
 ## Local dev with production data
 

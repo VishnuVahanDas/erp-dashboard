@@ -239,6 +239,20 @@ public class ApiServer {
                         number(b, "basic"), number(b, "hra"), number(b, "otherAllowance"),
                         b.path("effectiveFrom").asText("")));
                 send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", saved.id()).put("status", saved.status()));
+            } else if (method.equals("GET") && path.equals("/payroll/recommendations")) {
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                send(ex, 200, mapper.createObjectNode().set("recommendations", mapper.valueToTree(payroll.recommendations(acct))));
+            } else if (method.equals("POST") && path.equals("/payroll/recommendations")) {
+                // a manager asks for a reportee to be put on payroll; the director picks the amount
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                JsonNode b = readJson(ex);
+                long id = payroll.recommend(acct, b.path("accountId").asLong(0), b.path("startDate").asText(""),
+                        b.path("note").asText(""));
+                send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
+            } else if (method.equals("POST") && path.matches("/payroll/recommendations/\\d+/decline")) {
+                AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
+                payroll.declineRecommendation(acct, Long.parseLong(path.split("/")[3]), readJson(ex).path("note").asText(""));
+                send(ex, 200, mapper.createObjectNode().put("ok", true));
             } else if (method.equals("POST") && path.matches("/payroll/salaries/\\d+/(approve|reject)")) {
                 AuthStore.Account acct = requireRole(ex, AuthStore.DIRECTOR);
                 String[] parts = path.split("/");

@@ -67,6 +67,11 @@ public class PayrollStore {
     /** What a save did: approved straight away (director) or pending (manager proposal). */
     public record Saved(long id, String status) {}
 
+    /** A manager's request to put a reportee on payroll, without an amount. status: pending | accepted | declined. */
+    public record Recommendation(long id, long accountId, String name, String email, String recommendedBy,
+                                 String startDate, String note, String status, String decidedBy, Long decidedAt,
+                                 String decisionNote, long createdAt) {}
+
     public record Holiday(String day, String name) {}
 
     /** status: draft | finalized | paid. month is yyyy-MM. */
@@ -111,6 +116,22 @@ public class PayrollStore {
                 st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decided_by BIGINT REFERENCES accounts(id) ON DELETE SET NULL");
                 st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ");
                 st.execute("ALTER TABLE payroll_salaries ADD COLUMN IF NOT EXISTS decision_note TEXT NOT NULL DEFAULT ''");
+                // a manager asks for a reportee to be put on payroll; the director picks the amount
+                st.execute("""
+                        CREATE TABLE IF NOT EXISTS payroll_recommendations (
+                            id             BIGSERIAL PRIMARY KEY,
+                            account_id     BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                            recommended_by BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+                            start_date     DATE,
+                            note           TEXT NOT NULL DEFAULT '',
+                            status         TEXT NOT NULL DEFAULT 'pending'
+                                           CHECK (status IN ('pending','accepted','declined')),
+                            decided_by     BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+                            decided_at     TIMESTAMPTZ,
+                            decision_note  TEXT NOT NULL DEFAULT '',
+                            created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+                        )""");
+                st.execute("CREATE INDEX IF NOT EXISTS payroll_recommendations_account ON payroll_recommendations (account_id, status)");
                 st.execute("""
                         CREATE TABLE IF NOT EXISTS payroll_holidays (
                             day  DATE PRIMARY KEY,
@@ -208,6 +229,8 @@ public class PayrollStore {
                 throw new ForbiddenException("you can only propose a salary for someone who reports to you");
             if (hasPending(in.accountId()))
                 throw new IllegalArgumentException("a salary proposal for this person is already waiting for a director");
+            if (hasPendingRecommendation(in.accountId()))
+                throw new IllegalArgumentException("this person is already recommended for payroll - a director will set the salary");
         }
         money(in.basic(), "basic");
         money(in.hra(), "HRA");
@@ -215,27 +238,153 @@ public class PayrollStore {
         if (in.basic() + in.hra() + in.otherAllowance() <= 0) throw new IllegalArgumentException("salary must be more than 0");
         LocalDate from = date(in.effectiveFrom(), "effective from");
         String status = director ? "approved" : "pending";
+        try {
+            conn.setAutoCommit(false);
+            long id;
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    INSERT INTO payroll_salaries (account_id, basic, hra, other_allowance, effective_from, created_by,
+                                                  status, decided_by, decided_at)
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN now() END
+                    WHERE EXISTS (SELECT 1 FROM accounts WHERE id = ?) RETURNING id""")) {
+                ps.setLong(1, in.accountId());
+                ps.setDouble(2, round2(in.basic()));
+                ps.setDouble(3, round2(in.hra()));
+                ps.setDouble(4, round2(in.otherAllowance()));
+                ps.setDate(5, Date.valueOf(from));
+                ps.setLong(6, who.id());
+                ps.setString(7, status);
+                if (director) ps.setLong(8, who.id()); else ps.setNull(8, java.sql.Types.BIGINT);
+                ps.setBoolean(9, director);
+                ps.setLong(10, in.accountId());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) throw new IllegalArgumentException("employee not found");
+                    id = rs.getLong(1);
+                }
+            }
+            if (director) {
+                // setting the salary is how a director accepts a manager's recommendation
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        UPDATE payroll_recommendations SET status = 'accepted', decided_by = ?, decided_at = now()
+                        WHERE account_id = ? AND status = 'pending'""")) {
+                    ps.setLong(1, who.id());
+                    ps.setLong(2, in.accountId());
+                    ps.executeUpdate();
+                }
+            }
+            conn.commit();
+            return new Saved(id, status);
+        } catch (SQLException e) {
+            rollback();
+            throw new IOException("salary save failed: " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            rollback();
+            throw e;
+        } finally {
+            autoCommit();
+        }
+    }
+
+    // ------------------------------------------------------ recommendations
+
+    /** Directors: all. Managers: those for people who report to them. Newest first. */
+    public synchronized List<Recommendation> recommendations(AuthStore.Account who) throws IOException {
+        boolean director = who.has(AuthStore.DIRECTOR);
+        if (!director && !who.has(AuthStore.MANAGER)) throw new ForbiddenException("director or manager role required");
+        List<Recommendation> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO payroll_salaries (account_id, basic, hra, other_allowance, effective_from, created_by,
-                                              status, decided_by, decided_at)
-                SELECT ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN now() END
-                WHERE EXISTS (SELECT 1 FROM accounts WHERE id = ?) RETURNING id""")) {
-            ps.setLong(1, in.accountId());
-            ps.setDouble(2, round2(in.basic()));
-            ps.setDouble(3, round2(in.hra()));
-            ps.setDouble(4, round2(in.otherAllowance()));
-            ps.setDate(5, Date.valueOf(from));
-            ps.setLong(6, who.id());
-            ps.setString(7, status);
-            if (director) ps.setLong(8, who.id()); else ps.setNull(8, java.sql.Types.BIGINT);
-            ps.setBoolean(9, director);
-            ps.setLong(10, in.accountId());
+                SELECT r.id, r.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
+                       COALESCE(NULLIF(b.full_name,''), b.email), r.start_date::text, r.note, r.status,
+                       COALESCE(NULLIF(d.full_name,''), d.email),
+                       (EXTRACT(EPOCH FROM r.decided_at) * 1000)::bigint, r.decision_note,
+                       (EXTRACT(EPOCH FROM r.created_at) * 1000)::bigint
+                FROM payroll_recommendations r
+                JOIN accounts a ON a.id = r.account_id
+                LEFT JOIN accounts b ON b.id = r.recommended_by
+                LEFT JOIN accounts d ON d.id = r.decided_by
+                """ + (director ? "" : """
+                WHERE r.account_id <> ? AND r.account_id IN
+                    (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)
+                """) + "ORDER BY r.created_at DESC, r.id DESC")) {
+            if (!director) {
+                ps.setLong(1, who.id());
+                ps.setLong(2, who.id());
+            }
             try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) throw new IllegalArgumentException("employee not found");
-                return new Saved(rs.getLong(1), status);
+                while (rs.next()) {
+                    out.add(new Recommendation(rs.getLong(1), rs.getLong(2), rs.getString(3), rs.getString(4),
+                            rs.getString(5), rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9),
+                            (Long) rs.getObject(10), rs.getString(11), rs.getLong(12)));
+                }
             }
         } catch (SQLException e) {
-            throw new IOException("salary save failed: " + e.getMessage(), e);
+            throw new IOException("recommendation query failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
+
+    /** A manager recommends a reportee who isn't on payroll yet; the director sets the amount. */
+    public synchronized long recommend(AuthStore.Account who, long accountId, String startDate, String note) throws IOException {
+        if (accountId <= 0) throw new IllegalArgumentException("pick the team member");
+        if (!who.has(AuthStore.MANAGER) || accountId == who.id() || !reportsTo(accountId, who.id()))
+            throw new ForbiddenException("you can only recommend someone who reports to you");
+        String n = note == null ? "" : note.trim();
+        if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");
+        LocalDate start = startDate == null || startDate.isBlank() ? null : date(startDate, "start date");
+        if (hasApproved(accountId))
+            throw new IllegalArgumentException("already on payroll - propose a salary change instead");
+        if (hasPending(accountId))
+            throw new IllegalArgumentException("a salary proposal for this person is already waiting for a director");
+        if (hasPendingRecommendation(accountId))
+            throw new IllegalArgumentException("this person is already recommended - waiting for a director");
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO payroll_recommendations (account_id, recommended_by, start_date, note)
+                VALUES (?, ?, ?, ?) RETURNING id""")) {
+            ps.setLong(1, accountId);
+            ps.setLong(2, who.id());
+            if (start == null) ps.setNull(3, java.sql.Types.DATE); else ps.setDate(3, Date.valueOf(start));
+            ps.setString(4, n);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        } catch (SQLException e) {
+            throw new IOException("recommendation save failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Director declines a pending recommendation, with a reason the manager sees. */
+    public synchronized void declineRecommendation(AuthStore.Account who, long id, String note) throws IOException {
+        String n = note == null ? "" : note.trim();
+        if (n.isEmpty()) throw new IllegalArgumentException("say why the recommendation is declined");
+        if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE payroll_recommendations SET status = 'declined', decided_by = ?, decided_at = now(), decision_note = ?
+                WHERE id = ? AND status = 'pending'""")) {
+            ps.setLong(1, who.id());
+            ps.setString(2, n);
+            ps.setLong(3, id);
+            if (ps.executeUpdate() == 0) throw new IllegalArgumentException("this recommendation was already decided or doesn't exist");
+        } catch (SQLException e) {
+            throw new IOException("recommendation decline failed: " + e.getMessage(), e);
+        }
+    }
+
+    private boolean hasPendingRecommendation(long accountId) throws IOException {
+        return exists("SELECT 1 FROM payroll_recommendations WHERE account_id = ? AND status = 'pending' LIMIT 1", accountId);
+    }
+
+    private boolean hasApproved(long accountId) throws IOException {
+        return exists("SELECT 1 FROM payroll_salaries WHERE account_id = ? AND status = 'approved' LIMIT 1", accountId);
+    }
+
+    private boolean exists(String sql, long id) throws IOException {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IOException("payroll check failed: " + e.getMessage(), e);
         }
     }
 

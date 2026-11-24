@@ -318,13 +318,13 @@ const SAL_STATUS = { approved: 'live', pending: 'warn', rejected: 'bad' };
 const SAL_LABEL = { approved: 'Approved', pending: 'Waiting for a director', rejected: 'Rejected' };
 
 /** Director: saved at once. Manager: a proposal a director approves. */
-function SalaryDialog({ me, isDirector, people, person, onClose, onDone }) {
+function SalaryDialog({ me, isDirector, people, person, preset, onClose, onDone }) {
   const today = new Date().toLocaleDateString('sv');
-  const [accountId, setAccountId] = useState(person ? String(person.accountId) : '');
+  const [accountId, setAccountId] = useState(person ? String(person.accountId) : preset ? String(preset.accountId) : '');
   const [basic, setBasic] = useState(person ? String(person.basic) : '');
   const [hra, setHra] = useState(person ? String(person.hra) : '0');
   const [other, setOther] = useState(person ? String(person.otherAllowance) : '0');
-  const [from, setFrom] = useState(person ? today : `${today.slice(0, 7)}-01`);
+  const [from, setFrom] = useState(person ? today : preset?.effectiveFrom || `${today.slice(0, 7)}-01`);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const gross = (Number(basic) || 0) + (Number(hra) || 0) + (Number(other) || 0);
@@ -345,9 +345,9 @@ function SalaryDialog({ me, isDirector, people, person, onClose, onDone }) {
   };
 
   return (
-    <Modal title={verb} eyebrow={person ? person.name : 'Payroll'} onClose={onClose}>
+    <Modal title={verb} eyebrow={person ? person.name : preset ? preset.name : 'Payroll'} onClose={onClose}>
       <form className="person-form" onSubmit={submit}>
-        {!person && (
+        {!person && !preset && (
           <label className="field"><span>Employee</span>
             <select value={accountId} required onChange={(e) => setAccountId(e.target.value)}>
               <option value="" disabled>Pick a person…</option>
@@ -356,6 +356,7 @@ function SalaryDialog({ me, isDirector, people, person, onClose, onDone }) {
           </label>
         )}
         {person && <p className="muted">Now: <b>{money(person.gross)}</b> / month since {person.effectiveFrom}.</p>}
+        {preset && <p className="muted">Recommended by <b>{preset.by}</b>{preset.note ? <> — “{preset.note}”</> : null}. Saving the salary accepts the recommendation.</p>}
         <div className="form-grid">
           <label className="field"><span>Basic / month (₹)</span>
             <input type="number" min="0" step="0.01" required value={basic} onChange={(e) => setBasic(e.target.value)} autoFocus />
@@ -419,18 +420,104 @@ function RejectDialog({ me, row, onClose, onDone }) {
   );
 }
 
+/** Manager: ask for a team member to be put on payroll; a director sets the amount. */
+function RecommendDialog({ me, people, onClose, onDone }) {
+  const [accountId, setAccountId] = useState(people.length === 1 ? String(people[0].id) : '');
+  const [start, setStart] = useState(new Date().toLocaleDateString('sv'));
+  const [note, setNote] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await call('POST', '/api/payroll/recommendations', { accountId: Number(accountId), startDate: start, note }, me.token);
+      const who = people.find((x) => String(x.id) === accountId);
+      onDone(`Recommended ${who?.name || who?.email || 'them'} for payroll — a director will set the salary`);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Recommend for payroll" eyebrow="Your team" onClose={onClose}>
+      <form className="person-form" onSubmit={submit}>
+        <label className="field"><span>Team member</span>
+          <select value={accountId} required onChange={(e) => setAccountId(e.target.value)}>
+            <option value="" disabled>Pick someone from your team…</option>
+            {people.map((x) => <option key={x.id} value={x.id}>{x.name || x.email}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Suggested start date <em className="dim">(optional)</em></span>
+          <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+        </label>
+        <label className="field"><span>Note for the director <em className="dim">(optional)</em></span>
+          <textarea rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)}
+                    placeholder="e.g. Joined as drone pilot on the survey team, full-time." />
+        </label>
+        <small className="dim">No amount needed — a director decides the salary. They aren't paid until the director sets it.</small>
+        {error && <div className="inline err">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy || !accountId}>{busy ? 'Sending…' : 'Recommend'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Director declines a recommendation, with a reason the manager sees. */
+function DeclineDialog({ me, rec, onClose, onDone }) {
+  const [note, setNote] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await call('POST', `/api/payroll/recommendations/${rec.id}/decline`, { note }, me.token); onDone(`Declined the recommendation for ${rec.name}`); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Decline recommendation" eyebrow={rec.name} onClose={onClose}>
+      <form className="person-form" onSubmit={submit}>
+        <p className="muted">{rec.recommendedBy} recommended {rec.name} for payroll{rec.startDate ? ` from ${rec.startDate}` : ''}.</p>
+        <label className="field"><span>Reason (shown to {rec.recommendedBy})</span>
+          <textarea rows={3} maxLength={500} required value={note} onChange={(e) => setNote(e.target.value)} autoFocus
+                    placeholder="e.g. Intern — paid through the training programme, not payroll." />
+        </label>
+        {error && <div className="inline err">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Back</button>
+          <button className="btn danger" disabled={busy || !note.trim()}>{busy ? 'Saving…' : 'Decline'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+const REC_PILL = { pending: 'warn', accepted: 'live', declined: 'bad' };
+const REC_LABEL = { pending: 'Waiting for a director', accepted: 'Accepted', declined: 'Declined' };
+
 /** Director: every salary + proposals to approve. Manager: reportees, proposing changes. */
 function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
   const [rows, setRows] = useState([]);
   const [editing, setEditing] = useState(null); // null | 'new' | current row
   const [history, setHistory] = useState(null);
   const [rejecting, setRejecting] = useState(null);
+  const [recs, setRecs] = useState([]);
+  const [recommending, setRecommending] = useState(false);
+  const [declining, setDeclining] = useState(null);
+  const [accepting, setAccepting] = useState(null); // recommendation being turned into a salary
   const [busy, setBusy] = useState(null);
   const load = useCallback(async () => {
     try {
-      const r = (await call('GET', '/api/payroll/salaries', null, me.token)).salaries || [];
+      const [sal, rec] = await Promise.all([
+        call('GET', '/api/payroll/salaries', null, me.token),
+        call('GET', '/api/payroll/recommendations', null, me.token),
+      ]);
+      const r = sal.salaries || [], q = rec.recommendations || [];
       setRows(r);
-      onPending?.(r.filter((x) => x.status === 'pending').length);
+      setRecs(q);
+      onPending?.(r.filter((x) => x.status === 'pending').length + q.filter((x) => x.status === 'pending').length);
     } catch (e) { setError(e.message); }
   }, [me.token, setError, onPending]);
   useEffect(() => { load(); }, [load]);
@@ -452,8 +539,13 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
     for (const p of people) if ((p.status ?? 'active') === 'active' && p.id !== (isDirector ? -1 : me.id) && !map.has(p.id)) map.set(p.id, p);
     return [...map.values()].sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
   }, [people, isDirector, me.id]);
-  const without = pickable.filter((p) => !current.some((c) => c.accountId === p.id) && !pendingFor(p.id));
-  const done = (m) => { setEditing(null); setRejecting(null); flash(m); load(); };
+  const recsPending = recs.filter((r) => r.status === 'pending');
+  const recFor = (id) => recsPending.find((r) => r.accountId === id);
+  const without = pickable.filter((p) => !current.some((c) => c.accountId === p.id) && !pendingFor(p.id) && !recFor(p.id));
+  const done = (m) => {
+    setEditing(null); setRejecting(null); setRecommending(false); setDeclining(null); setAccepting(null);
+    flash(m); load();
+  };
 
   const approve = async (r) => {
     setBusy(r.id);
@@ -463,6 +555,25 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
   };
 
   return (<>
+    {isDirector && recsPending.length > 0 && (
+      <section className="panel">
+        <div className="panel-head"><h3>Recommended by managers</h3><span className="muted">{recsPending.length} to put on payroll</span></div>
+        <div className="leave-cards">
+          {recsPending.map((r) => (
+            <div key={r.id} className="leave-card">
+              <div className="who"><Avatar label={r.name} /><span>{r.name}<small>recommended by {r.recommendedBy || '—'} · {fmtStamp(r.createdAt)}</small></span></div>
+              <b>{r.startDate ? `Start ${fmtDay(r.startDate)} ${r.startDate.slice(0, 4)}` : 'No start date given'}</b>
+              {r.note ? <p title={r.note}>{r.note}</p> : <p className="dim">No note.</p>}
+              <div className="leave-act">
+                <button className="btn danger small" onClick={() => setDeclining(r)}>Decline</button>
+                <button className="btn primary small" onClick={() => setAccepting(r)}><Icon name="money" size={15} />Set salary</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
     {isDirector && pending.length > 0 && (
       <section className="panel">
         <div className="panel-head"><h3>Waiting for your approval</h3><span className="muted">{pending.length} proposal(s) from managers</span></div>
@@ -492,15 +603,23 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
     <section className="panel">
       <div className="panel-head">
         <h3>{isDirector ? 'Salaries' : "Your team's salaries"}</h3>
-        <button className="btn primary" onClick={() => setEditing('new')} disabled={!without.length}
-                title={without.length ? '' : 'Everyone has a salary or a proposal — use the row buttons'}>
-          <Icon name="plus" />{isDirector ? 'Set salary' : 'Propose salary'}
-        </button>
+        <div className="leave-act">
+          {!isDirector && (
+            <button className="btn ghost" onClick={() => setRecommending(true)} disabled={!without.length}
+                    title={without.length ? 'Recommend a team member without naming an amount' : 'Everyone in your team is on payroll or already recommended'}>
+              <Icon name="team" />Recommend for payroll
+            </button>
+          )}
+          <button className="btn primary" onClick={() => setEditing('new')} disabled={!without.length}
+                  title={without.length ? '' : 'Everyone has a salary or a proposal — use the row buttons'}>
+            <Icon name="plus" />{isDirector ? 'Set salary' : 'Propose salary'}
+          </button>
+        </div>
       </div>
       {without.length > 0 && (
         <div className="inline pay-note">{without.length} {isDirector ? 'active people have' : 'of your reportees have'} no salary yet and won't be in payroll: {without.slice(0, 6).map((p) => p.name || p.email).join(', ')}{without.length > 6 ? '…' : ''}</div>
       )}
-      {!isDirector && <small className="dim pay-foot">Salaries you propose apply once a director approves them.</small>}
+      {!isDirector && <small className="dim pay-foot">Recommend someone without an amount, or propose a salary yourself — either way a director decides.</small>}
       {!current.length && !pending.length ? <Empty title="No salaries yet" hint={isDirector ? "Set each person's monthly salary to include them in payroll." : 'Propose a salary for someone in your team; a director approves it.'} /> : (
         <div className="table-wrap">
           <table className="leave-table">
@@ -538,6 +657,30 @@ function SalariesPanel({ me, isDirector, people, flash, setError, onPending }) {
       )}
     </section>
 
+    {!isDirector && recs.length > 0 && (
+      <section className="panel">
+        <div className="panel-head"><h3>Your recommendations</h3><span className="muted">{recsPending.length} waiting</span></div>
+        <ul className="perf-list">
+          {recs.slice(0, 20).map((r) => (
+            <li key={r.id}>
+              <span><b>{r.name}</b>
+                <small>recommended {fmtStamp(r.createdAt)}{r.startDate ? ` · start ${r.startDate}` : ''}{r.note ? ` · “${r.note}”` : ''}</small>
+                {r.status !== 'pending' && <small className={r.status === 'declined' ? 'pay-rejected' : ''}>
+                  {r.status} by {r.decidedBy || '—'} {fmtStamp(r.decidedAt)}{r.decisionNote ? ` — “${r.decisionNote}”` : ''}</small>}
+              </span>
+              <span className={`pill ${REC_PILL[r.status]}`}>{REC_LABEL[r.status]}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {recommending && <RecommendDialog me={me} people={without} onClose={() => setRecommending(false)} onDone={done} />}
+    {declining && <DeclineDialog me={me} rec={declining} onClose={() => setDeclining(null)} onDone={done} />}
+    {accepting && <SalaryDialog me={me} isDirector={isDirector} people={[]}
+                                preset={{ accountId: accepting.accountId, name: accepting.name, effectiveFrom: accepting.startDate,
+                                          by: accepting.recommendedBy, note: accepting.note }}
+                                onClose={() => setAccepting(null)} onDone={done} />}
     {editing && <SalaryDialog me={me} isDirector={isDirector} people={without} person={editing === 'new' ? null : editing}
                               onClose={() => setEditing(null)} onDone={done} />}
     {rejecting && <RejectDialog me={me} row={rejecting} onClose={() => setRejecting(null)} onDone={done} />}
@@ -624,8 +767,9 @@ export function OpsPayroll({ me, isDirector, people }) {
   const flash = useCallback((m) => { setNotice(m); setTimeout(() => setNotice(null), 5000); }, []);
   useEffect(() => {
     if (!isDirector) return;
-    call('GET', '/api/payroll/salaries', null, me.token)
-      .then((d) => setWaiting((d.salaries || []).filter((r) => r.status === 'pending').length)).catch(() => {});
+    Promise.all([call('GET', '/api/payroll/salaries', null, me.token), call('GET', '/api/payroll/recommendations', null, me.token)])
+      .then(([a, b]) => setWaiting([...(a.salaries || []), ...(b.recommendations || [])].filter((r) => r.status === 'pending').length))
+      .catch(() => {});
   }, [isDirector, me.token]);
   const sections = isDirector
     ? [['run', 'Monthly payroll'], ['salaries', 'Salaries'], ['holidays', 'Holidays']]
