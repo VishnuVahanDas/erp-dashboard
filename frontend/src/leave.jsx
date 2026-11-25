@@ -26,11 +26,21 @@ const iso = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
 const isSunday = (s) => parse(s).getUTCDay() === 0;
 
-/** Mirrors the backend: Sundays don't count, a half-day is 0.5, late/early is hours / 8. */
-export function countDays(from, to, half, hours = 0) {
+/** Company holidays (managed in Payroll): { 'yyyy-MM-dd': name }. Loaded once per view. */
+function useHolidays(me) {
+  const [map, setMap] = useState({});
+  useEffect(() => {
+    call('GET', '/api/payroll/holidays', null, me.token)
+      .then((d) => setMap(Object.fromEntries((d.holidays || []).map((h) => [h.day, h.name])))).catch(() => {});
+  }, [me.token]);
+  return map;
+}
+
+/** Mirrors the backend: Sundays and holidays don't count, a half-day is 0.5, late/early is hours / 8. */
+export function countDays(from, to, half, hours = 0, holidays = {}) {
   if (!from || !to || to < from) return 0;
   let n = 0;
-  for (let d = from; d <= to; d = addDays(d, 1)) if (!isSunday(d)) n++;
+  for (let d = from; d <= to; d = addDays(d, 1)) if (!isSunday(d) && !holidays[d]) n++;
   if (!half) return n;
   return isShort(half) ? (n * hours) / HOURS_PER_DAY : n * 0.5;
 }
@@ -60,7 +70,7 @@ function onLeave(requests, day) {
 
 /* ------------------------------------------------------------- calendar */
 
-function LeaveCalendar({ requests }) {
+function LeaveCalendar({ requests, holidays = {} }) {
   const [month, setMonth] = useState(() => todayStr().slice(0, 7)); // yyyy-MM
   const today = todayStr();
 
@@ -88,7 +98,7 @@ function LeaveCalendar({ requests }) {
   };
   const title = parse(first).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   const monthDays = Object.entries(byDay)
-    .filter(([d, r]) => d.startsWith(month) && r.status === 'approved' && !isSunday(d))
+    .filter(([d, r]) => d.startsWith(month) && r.status === 'approved' && !isSunday(d) && !holidays[d])
     .reduce((s, [, r]) => s + (r.halfDay ? r.days : 1), 0);
 
   return (
@@ -104,16 +114,18 @@ function LeaveCalendar({ requests }) {
         {cells.map((d, i) => {
           if (!d) return <span key={`x${i}`} />;
           const r = byDay[d];
-          const sun = isSunday(d);
-          const cls = ['cal-day', sun && 'sun', d === today && 'today',
+          const hol = holidays[d];
+          const sun = isSunday(d) || !!hol; // both are paid days off, never counted as leave
+          const cls = ['cal-day', sun && 'sun', hol && 'holiday', d === today && 'today',
             r && !sun && `leave ${r.category} ${r.status}`, r?.halfDay && 'half'].filter(Boolean).join(' ');
           const tip = r && !sun
             ? `${CATS[r.category].label} leave · ${r.status}${r.halfDay ? ` · ${HALF[r.halfDay]}${isShort(r.halfDay) ? ` ${fmtHours(r.hours)}` : ''}` : ''}\n${r.reason}`
-            : sun ? 'Sunday' : undefined;
+            : hol ? `Holiday · ${hol}` : sun ? 'Sunday' : undefined;
           return (
             <div key={d} className={cls} title={tip}>
               <span>{+d.slice(8)}</span>
               {r && !sun && <em>{CATS[r.category].short}{isShort(r.halfDay) ? ` ${r.hours}h` : r.halfDay ? '½' : ''}</em>}
+              {hol && <em className="hol" title={hol}>{hol.length > 9 ? `${hol.slice(0, 8)}…` : hol}</em>}
             </div>
           );
         })}
@@ -124,6 +136,7 @@ function LeaveCalendar({ requests }) {
         <span><i className="sw personal pending" />Pending</span>
         <span><i className="sw half" />Half-day / hours</span>
         <span><i className="sw sun" />Sunday (not counted)</span>
+        <span><i className="sw holiday" />Holiday (not counted)</span>
       </div>
     </div>
   );
@@ -131,7 +144,7 @@ function LeaveCalendar({ requests }) {
 
 /* ---------------------------------------------------------------- apply */
 
-function LeaveForm({ me, balance, onClose, onSaved }) {
+function LeaveForm({ me, balance, holidays = {}, onClose, onSaved }) {
   const [category, setCategory] = useState('personal');
   const [from, setFrom] = useState(todayStr());
   const [toDate, setTo] = useState(todayStr());
@@ -145,13 +158,13 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
   const halfDay = half;
   const to = halfDay ? from : toDate;
   const shortHours = isShort(halfDay) ? hours : 0;
-  const days = countDays(from, to, halfDay, shortHours);
+  const days = countDays(from, to, halfDay, shortHours, holidays);
   const left = balance.find((b) => b.category === category)?.remaining ?? 0;
   const crossesYear = from && to && from.slice(0, 4) !== to.slice(0, 4);
   const problem = !from || !to ? null
     : to < from ? "'To' date is before 'From' date"
     : crossesYear ? 'Leave can’t cross into a new year — file one request per year'
-    : days === 0 ? 'Those dates are all Sundays — no leave needed'
+    : days === 0 ? 'Those dates are all Sundays or holidays — no leave needed'
     : days > left ? `Only ${fmtDays(left)} of ${CATS[category].label.toLowerCase()} leave left`
     : null;
 
@@ -236,7 +249,7 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
           <Icon name="calendar" />
           <span>{problem || <>
             <b>{shortHours ? `${fmtHours(shortHours)} · ${fmtDays(days)}` : fmtDays(days)}</b> of {CATS[category].label.toLowerCase()} leave
-            {countDays(from, to, '') < (parse(to) - parse(from)) / 864e5 + 1 ? ' (Sundays skipped)' : ''}
+            {countDays(from, to, '', 0, holidays) < (parse(to) - parse(from)) / 864e5 + 1 ? ' (Sundays / holidays skipped)' : ''}
             {' '}· {fmtDays(left - days)} left after this
           </>}</span>
         </div>
@@ -258,16 +271,71 @@ function LeaveForm({ me, balance, onClose, onSaved }) {
  * team/all endpoints return. remaining counts pending requests as booked,
  * the same way the employee's own tiles do.
  */
-export function makeBalanceOf(usage, quotas) {
+export function makeBalanceOf(usage, quotas, personQuotas) {
   const rows = new Map();
   for (const u of usage || []) rows.set(`${u.accountId}|${u.year}|${u.category}`, u);
+  const own = new Map();
+  for (const q of personQuotas || []) own.set(`${q.accountId}|${q.category}`, q);
   return (accountId, year) => Object.keys(CATS).map((c) => {
     const u = rows.get(`${accountId}|${year}|${c}`);
-    const quota = quotas?.[c] ?? 0;
+    const mine = own.get(`${accountId}|${c}`);
+    const quota = mine ? mine.days : quotas?.[c] ?? 0;
     const used = u?.used ?? 0;
     const pending = u?.pending ?? 0;
-    return { category: c, quota, used, pending, remaining: quota - used - pending };
+    return {
+      category: c, quota, used, pending, remaining: quota - used - pending,
+      custom: !!mine, companyQuota: quotas?.[c] ?? 0, setBy: mine?.setBy, setAt: mine?.setAt,
+    };
   });
+}
+
+/**
+ * One person's yearly days, replacing the company default for them. A
+ * director (anyone) or their manager (reportees) sets it; never your own.
+ * balance = that person's rows from makeBalanceOf.
+ */
+export function PersonQuotaDialog({ me, person, balance, onClose, onDone }) {
+  const name = person.name || person.email;
+  const [q, setQ] = useState(() => Object.fromEntries(balance.map((b) => [b.category, b.custom ? String(b.quota) : ''])));
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      // empty = back to the company default
+      const body = Object.fromEntries(Object.keys(CATS).map((c) => [c, q[c] === '' ? null : Number(q[c])]));
+      await call('PUT', `/api/leave/quotas/${person.id}`, body, me.token);
+      onDone(`Leave quota updated for ${name}`);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="Leave quota" eyebrow={name} onClose={onClose}>
+      <form className="person-form" onSubmit={submit}>
+        <div className="form-grid">
+          {balance.map((b) => (
+            <label key={b.category} className="field">
+              <span>{CATS[b.category].label} days / year</span>
+              <input type="number" min="0" max="365" step="0.5" value={q[b.category]}
+                     placeholder={`${b.companyQuota} (company default)`}
+                     onChange={(e) => setQ({ ...q, [b.category]: e.target.value })} />
+              <small className="dim">{num(b.used)} taken · {num(b.pending)} pending this year
+                {b.custom && b.setBy ? ` · set by ${b.setBy}` : ''}</small>
+            </label>
+          ))}
+        </div>
+        <small className="dim">Leave a box empty to use the company default. Applies to this year and later; leave already approved stays approved.</small>
+        {error && <div className="inline err">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save quota'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 /** "Personal 8 / 12 left · Sick 5 / 6 left" for one employee, in the request's year. */
@@ -358,7 +426,7 @@ function BalanceStats({ balance, year }) {
       {balance.map((b) => (
         <Stat key={b.category} label={`${CATS[b.category].label} leave left`} value={num(b.remaining)} unit={` / ${b.quota}`}
               accent={b.remaining <= 0 ? 'alert' : b.category === 'personal' ? 'cyan' : 'saffron'} icon={icon[b.category]}
-              foot={`${num(b.used)} taken · ${num(b.pending)} pending · ${year}`} />
+              foot={`${num(b.used)} taken · ${num(b.pending)} pending · ${year}${b.custom ? ' · your own quota' : ''}`} />
       ))}
     </div>
   );
@@ -379,6 +447,8 @@ export function LeaveBalance({ me }) {
 /** Employee "Leave" tab: balance, calendar, history, new request. */
 export function EmployeeLeave({ me }) {
   const [data, setData] = useState({ requests: [], balance: [], year: null });
+  const holidays = useHolidays(me);
+  const upcoming = Object.entries(holidays).filter(([d]) => d >= todayStr()).sort().slice(0, 4);
   const [form, setForm] = useState(false);
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
@@ -405,7 +475,11 @@ export function EmployeeLeave({ me }) {
         <h3>Leave calendar</h3>
         <button className="btn primary" onClick={() => setForm(true)}><Icon name="plus" />Request leave</button>
       </div>
-      <LeaveCalendar requests={data.requests} />
+      <LeaveCalendar requests={data.requests} holidays={holidays} />
+      {upcoming.length > 0 && (
+        <div className="hol-next"><Icon name="calendar" size={15} />Upcoming holidays:
+          {upcoming.map(([d, n]) => <span key={d}><b>{n}</b> {fmtShort(d)}</span>)}</div>
+      )}
     </section>
 
     <section className="panel">
@@ -416,7 +490,7 @@ export function EmployeeLeave({ me }) {
                   )} />
     </section>
 
-    {form && <LeaveForm me={me} balance={data.balance} onClose={() => setForm(false)}
+    {form && <LeaveForm me={me} balance={data.balance} holidays={holidays} onClose={() => setForm(false)}
                         onSaved={(m) => { setForm(false); flash(m); load(); }} />}
   </>);
 }
@@ -493,7 +567,7 @@ function QuotaDialog({ me, onClose, onDone }) {
               </label>
             ))}
           </div>
-          <small className="dim">Applies to everyone for the current and future years. Requests already approved stay approved.</small>
+          <small className="dim">Applies to everyone without a personal quota, for the current and future years. Set a personal quota from a person’s details in People. Requests already approved stay approved.</small>
           {error && <div className="inline err">{error}</div>}
           <div className="modal-actions">
             <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -525,9 +599,9 @@ export function DashboardLeave({ me, requests, balanceOf, reload, onOpenAll }) {
   const awayNames = [...new Set(away.map((r) => r.name.split(' ')[0]))];
   const upcoming = requests.filter((r) => r.status === 'approved' && r.from > today).length;
 
-  return (
+  return (<>
+    <Toasts notice={notice} error={error} onClose={() => setError(null)} />
     <section className="panel">
-      <Toasts notice={notice} error={error} onClose={() => setError(null)} />
       <div className="panel-head">
         <h3>Leave</h3>
         <div className="leave-act">
@@ -561,12 +635,12 @@ export function DashboardLeave({ me, requests, balanceOf, reload, onOpenAll }) {
           <button className="link dash-leave-more" onClick={onOpenAll}>+{pending.length - SHOW} more waiting — open Leave requests →</button>
         )}
       </>)}
-
-      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
-                                 onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
-      {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
     </section>
-  );
+
+    {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
+                               onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
+    {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
+  </>);
 }
 
 /**

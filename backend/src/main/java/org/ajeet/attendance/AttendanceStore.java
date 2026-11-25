@@ -49,12 +49,44 @@ public class AttendanceStore {
         }
     }
 
-    /** One punch row for the portal: name resolved via the users join. */
-    public record AttendancePunch(int enrollNumber, String name, String time, String verifyLabel) {}
+    /**
+     * One punch row for the portal: name resolved via the users join.
+     * addedBy is null for device punches; for an approved missed-punch fix
+     * (see PunchFixStore#approvedPunches) it names who approved it.
+     */
+    public record AttendancePunch(int enrollNumber, String name, String time, String verifyLabel, String addedBy) {}
 
     /** Punches for a single device user, newest first (the employee's own view). */
     public synchronized List<AttendancePunch> punchesFor(int enrollNumber) throws IOException {
         return punchRows("WHERE p.enroll_number = ?", enrollNumber);
+    }
+
+    /**
+     * One device user's punches in [from, toExclusive), newest first - a
+     * person's month in the People details. Own range filter, so a busy
+     * month isn't cut off by the 500-row cap of the log views.
+     */
+    public synchronized List<AttendancePunch> punchesBetween(int enrollNumber, LocalDate from,
+                                                             LocalDate toExclusive) throws IOException {
+        List<AttendancePunch> out = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT p.enroll_number, COALESCE(u.name,''),
+                       to_char(p.punch_time, 'YYYY-MM-DD HH24:MI:SS'), p.verify_label
+                FROM punches p LEFT JOIN users u ON u.enroll_number = p.enroll_number
+                WHERE p.enroll_number = ? AND p.punch_time >= ? AND p.punch_time < ?
+                ORDER BY p.punch_time DESC LIMIT 5000""")) {
+            ps.setInt(1, enrollNumber);
+            ps.setObject(2, from);
+            ps.setObject(3, toExclusive);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new AttendancePunch(rs.getInt(1), rs.getString(2), rs.getString(3), rs.getString(4), null));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("person attendance query failed: " + e.getMessage(), e);
+        }
+        return out;
     }
 
     /** Everyone who punched today - the director dashboard card. */
@@ -90,7 +122,7 @@ public class AttendanceStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),
-                            rs.getString(3), rs.getString(4)));
+                            rs.getString(3), rs.getString(4), null));
                 }
             }
         } catch (SQLException e) {
@@ -126,7 +158,7 @@ public class AttendanceStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),
-                            rs.getString(3), rs.getString(4)));
+                            rs.getString(3), rs.getString(4), null));
                 }
             }
         } catch (SQLException e) {

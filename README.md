@@ -15,12 +15,17 @@ web-dashboard/
 ├── backend/             Java 24+, Maven wrapper -> target/vyom-erp.jar
 │   └── src/main/java/org/ajeet/
 │       ├── Main.java
-│       ├── web/ApiServer.java              REST routes
+│       ├── web/ApiServer.java              HTTP server: CORS, dispatch, errors -> status codes
+│       ├── web/Http.java                   shared JSON / session / role helpers
+│       ├── web/routes/*Routes.java         REST routes, one class per module (Auth, People, Attendance,
+│       │                                   PunchFix, Leave, Mbo, Payroll, Notification, Sync)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
+│       ├── attendance/PunchFixStore.java   missed-punch requests and approved fixes
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
-│       ├── leave/LeaveStore.java           leave requests, approvals, yearly quotas (LTS)
+│       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
 │       ├── mbo/MboStore.java               MBO discussions: propose / acknowledge / deny / suggest
+│       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
@@ -74,14 +79,16 @@ There is no self sign-up. Accounts are created inside the portal:
 
 | Role     | Can do |
 | -------- | ------ |
-| Director | See everyone's attendance; add anyone as director / manager / employee; edit roles, reporting lines, device link and status; reset passwords; run device sync. All directors have equal access. |
-| Manager  | See attendance of the people who report to them; add **employees** only (must name at least one reporting manager). |
+| Director | See everyone's attendance; add anyone as director / manager / employee; edit roles, reporting lines, device link and status; reset passwords; run device sync. All directors have equal access. Directors report to nobody (no reporting manager). |
+| Manager  | See attendance of the people who report to them; add **employees** only (must name at least one reporting manager); set a reportee's personal leave quota. |
 | Employee | See their own attendance. Every account is an employee. |
 
 One person can hold several roles; the sidebar switcher changes the dashboard
 (the last choice is remembered per browser). An employee can report to several
-managers, each optionally tagged with a project. The last active director can't
-be demoted or disabled. `ADMIN_EMAIL` / `ADMIN_PASSWORD` seed the first director
+managers, each optionally tagged with a project. Directors sit at the top and
+have no reporting manager: the API refuses reporting lines for a director, and
+saving someone as a director removes any lines they had. The last active
+director can't be demoted or disabled. `ADMIN_EMAIL` / `ADMIN_PASSWORD` seed the first director
 when no active director exists; on first start, old `admin` accounts become
 directors and old pending/rejected sign-ups become `disabled`.
 
@@ -89,9 +96,17 @@ directors and old pending/rejected sign-ups become `disabled`.
 | ------ | ---- | --- | ------------- |
 | POST | `/api/auth/login` | anyone | `{email, password}` → account + `roles` + `token` |
 | POST | `/api/auth/password` | signed in | `{current, next}` |
-| GET  | `/api/attendance/my` | employee | own punches |
-| GET  | `/api/attendance/team[?range=today]` | manager | reportees' punches |
-| GET  | `/api/attendance/today`, `/all` | director | everyone's punches |
+| GET  | `/api/attendance/my` | employee | own punches, plus approved fixes as entries with `addedBy` (the approver) |
+| GET  | `/api/attendance/team[?range=today]` | manager | reportees' punches (+ approved fixes, as above) |
+| GET  | `/api/notifications?as=employee\|manager\|director` | signed in (a role you hold) | items waiting on you in that role: `{kind, id, title, detail, tab, at}` |
+| GET  | `/api/punch-fixes/my` | signed in | own missed-punch requests |
+| GET  | `/api/punch-fixes/missing` | signed in | own past days (last 31, month not locked) with an odd number of punches and no fix asked for: `{day, punches: [HH:mm]}` |
+| POST | `/api/punch-fixes` | signed in | `{day, in: HH:mm, out: HH:mm, reason}` — a past day, month not finalized, one open fix per day |
+| POST | `/api/punch-fixes/{id}/cancel` | owner | while pending |
+| GET  | `/api/punch-fixes/team` | manager (reportees), director (all) | requests to decide |
+| POST | `/api/punch-fixes/{id}/approve`, `/reject` | director, the person's manager (never own) | `{note}`: optional to approve (a comment), required to reject; shown to the employee |
+| GET  | `/api/attendance/person/{accountId}?month=YYYY-MM` | director (anyone), manager (reportees) | one person's punches that month (+ approved fixes) + `linked`; for the People details |
+| GET  | `/api/attendance/today`, `/all` | director | everyone's punches (`/all` + approved fixes) |
 | GET  | `/api/team` | manager | reportees (one row per project line) |
 | GET  | `/api/people` | director | everyone + roles + `reportsTo` |
 | GET  | `/api/people/options` | director, manager | pickable managers + unlinked device users |
@@ -104,17 +119,28 @@ directors and old pending/rejected sign-ups become `disabled`.
 | POST | `/api/leave` | signed in | `{category: personal\|sick, from, to, halfDay?: first\|second\|late\|early, hours?, reason}`; `hours` only for late/early |
 | POST | `/api/leave/{id}/approve`, `/reject` | reporting manager, director | `{note?}`; not your own request; first decision wins |
 | POST | `/api/leave/{id}/cancel` | owner, reporting manager, director | owner: pending, or approved and not started |
-| GET  | `/api/leave/team` | manager | reportees' `requests`, plus `usage` (approved + pending days per person, year and category) and `quotas` |
-| GET  | `/api/leave/all` | director | everyone's `requests`, `usage` and `quotas` |
-| GET / PUT | `/api/leave/quotas` | signed in / director | `{personal, sick}` days per calendar year |
+| GET  | `/api/leave/team` | manager | reportees' `requests`, plus `usage` (approved + pending days per person, year and category), `quotas` and `personQuotas` (`{accountId, category, days, setBy, setAt}`) |
+| GET  | `/api/leave/all` | director | everyone's `requests`, `usage`, `quotas` and `personQuotas` |
+| GET / PUT | `/api/leave/quotas` | signed in / director | company default `{personal, sick}` days per calendar year |
+| PUT  | `/api/leave/quotas/{accountId}` | director (anyone), the person's manager (reportees); never your own | `{personal?, sick?}`: that person's own days per year; `null` = back to the company default, a missing key = unchanged. Returns their `balance` |
 
-**Leave (LTS):** Sundays inside a range don't count; a half-day is 0.5. A
+**Leave (LTS):** Sundays and company holidays (the list a director keeps in
+Payroll → Holidays, also shown on the leave calendar) inside a range don't count; a half-day is 0.5. A
 **late arrival** or **early departure** is 0.5–4 hours of one date in
 half-hour steps, counted as hours ÷ 8 of a day. Every partial request (half-day,
 late, early) is a single date. Late and first half take the morning, early and
 second half the evening, so late + early on one day is fine but late + first
 half clashes. A request must fit in the yearly quota counting approved + pending
-days, and can't cross into a new year. Quotas default to 12 personal / 6 sick.
+days, and can't cross into a new year. The company quotas default to 12
+personal / 6 sick.
+
+**Personal quotas:** quotas differ per person. A director (anyone) or the
+person's manager (their reportees) sets that person's own days per category
+with **Edit quota** in their details (People / My team, click the person);
+nobody sets their own. An empty box keeps the company default. The personal
+quota is used for the balance, for applying and for approving, every year
+until it's changed; leave already approved stays approved. Each personal
+quota records who set it and when (`leave_person_quotas`).
 
 The director's **Dashboard** has a leave panel: pending requests with Approve /
 Reject, who is on leave today, upcoming approved leave, and shortcuts to the
@@ -146,6 +172,89 @@ raised themselves, average reply time and anything waiting on them, plus "Most
 agreed", "Most initiative" and "Quickest replies" badges. It is computed in the
 browser from the threads the tab already loads; there is no extra API.
 
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET / POST | `/api/payroll/salaries` | director, manager | salary rows with `status` (managers: their reportees) / `{accountId, basic, hra?, otherAllowance?, effectiveFrom}` adds an approved row — directors for anyone, managers for their reportees, never yourself |
+| POST | `/api/payroll/salaries/{id}/approve`, `/reject` | director, the person's manager | `{note}` (required to reject); pending proposals only, first decision wins |
+| GET  | `/api/payroll/recommendations` | director, manager | recommendations (managers: their reportees) with `status` pending/accepted/declined |
+| POST | `/api/payroll/recommendations` | manager (reportees only) | `{accountId, startDate?, note?}` — put someone on payroll without an amount |
+| POST | `/api/payroll/recommendations/{id}/decline` | director, the person's manager | `{note}` required |
+| GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
+| POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
+| GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
+| GET  | `/api/payroll/runs/{yyyy-MM}` | director, manager | lines; managers get their reportees, finalized/paid months only |
+| GET  | `/api/payroll/runs/{yyyy-MM}/{accountId}/days` | director, the employee, their manager | day-by-day breakdown (finalized months for non-directors) |
+| POST | `/api/payroll/runs/{yyyy-MM}/generate` | director | (re)builds a draft month; corrections are kept |
+| POST | `/api/payroll/runs/{yyyy-MM}/{accountId}/correction` | director | `{hours, note}` ± missed hours, draft only; note required |
+| POST | `/api/payroll/runs/{yyyy-MM}/finalize`, `/paid` | director | draft → finalized (locked) → paid `{paidOn?}` |
+| GET  | `/api/payroll/my` | signed in | own finalized/paid payslips |
+
+**Payroll:** fixed monthly salary (basic + HRA + other allowance), cut only for
+hours missed. Day rate = gross ÷ days in that month (28–31); hour rate = day
+rate ÷ 8. Every Mon–Sat that isn't a holiday needs a 9 h first-to-last punch
+span (1 h lunch inside). Approved leave lowers it: full day → not counted,
+half-day → 4 h, late/early of X h → 9 − X h. Missed time per day is capped at
+8 h (an absent day costs one day's pay); up to 10 minutes is forgiven, more is
+rounded up to the next half hour. Sundays and holidays are paid. While a month
+is running, only days up to yesterday count. Someone whose first salary row
+starts mid-month is paid from that date. The director can add a ± hours
+correction with a note (forgotten punch, unlinked account) before finalizing;
+a finalized month can't change.
+
+**Who sets pay:** a director for anyone, or a manager for their own reportees
+(never for themselves). A salary saved by either applies at once and closes
+open requests for that person (a pending recommendation is accepted, a waiting
+proposal is marked replaced). A manager can also **recommend** a reportee who
+isn't on payroll without naming an amount; a director or another of that
+person's managers accepts it by setting the salary, or declines it with a
+reason. Managers open Payroll on **My team**: every reportee with their payroll
+status, **Add reportee to payroll** / **Set salary** / **Change**, and the
+requests waiting for them. Directors still see and decide everything. Each line stores its day-by-day breakdown as
+generated, so a payslip doesn't change if punches are re-synced later. An approved missed-punch
+fix widens that day's span (earliest in, latest out of device punches and the
+fix) and is noted in the breakdown; pending or rejected fixes are ignored.
+Employees see finalized months in a **Payslips** tab (print / save as PDF from
+the browser); directors can export a month as CSV for the bank or accountant.
+
+**Notifications:** the bell in the header lists what's waiting on you in the
+role you're viewing as — as a director or manager: pending leave, punch fixes,
+payroll recommendations / proposals and MBOs on your turn, for the people you
+can decide for; as an employee: MBOs on your turn and your own leave / punch
+fixes decided in the last week. In every role it also lists your own days with
+a missing punch ("You didn't punch properly"); clicking one opens your
+employee Punch history, where the fix is requested. It is worked out on each request (no stored
+read state) and refreshes every 30 s; clicking an item opens its tab.
+
+**Missed punches:** a past day with an odd number of device punches (checked in
+but never out, or out without an in) counts as incomplete. For the last 31 days
+(skipping months whose payroll is locked, and days that already have a fix
+request) it shows in the bell and at the top of the employee's Punch history with
+**Request fix**, prefilled from the device punch (a lone punch before 1 pm is
+taken as the check-in, a later one as the check-out). The employee asks for a
+fix ("in 09:00, out 18:00 on 12 Sep") and picks what happened from a list
+("Forgot to punch out in the evening" / "…in in the morning" is chosen from the
+device punch; also both, device didn't record, site visit, other) with optional
+details; the reason is stored as that text. Their reporting manager or a
+director decides it on the Dashboard: **Approve** in one click, **Decline** with
+a reason, or **Comment** to write a note and then approve or decline with it.
+The note is shown to the employee in their requests, in the bell and on that
+day's row in their Punch history (which also says when a fix is waiting or was
+declined). A manager who forgot asks the same
+way and their own reporting manager decides; a director's request goes to
+another director. Fixes are kept in `punch_fixes` — the device `punches` are
+never changed — and payroll uses approved ones when a month is generated. In
+the Punch history, Team punches and a person's attendance an approved fix shows as
+entries marked **Added by <approver> on request** (a fix time within a minute
+of a device punch isn't repeated).
+
+**People → Teams:** directors open People on teams — one per manager, built
+from `reporting_lines` (someone with two managers is in both; managers can sit
+in another team) — with the total headcount and who isn't in a team. Clicking a
+team lists its members; clicking anyone (here, in Everyone, or in a manager's
+team list) opens their details: leave taken / pending / left this year and
+recent requests, attendance for a month (days present, hours, short days),
+current salary and last payslip, and MBO results.
+
 Accounts are created only inside the portal (no sign-up). The backend needs
 `PG_URL` and won't start without it.
 
@@ -161,8 +270,10 @@ can start first. If you change one, change the other repo too.
 | `sync_requests` — "Sync device" queue | dashboard (request), agent (claim/finish) | both |
 | `sync_agent` — single heartbeat row | agent | dashboard |
 | `accounts`, `account_roles`, `reporting_lines`, `sessions` | dashboard | dashboard |
-| `leave_requests`, `leave_quotas` | dashboard | dashboard |
+| `leave_requests`, `leave_quotas`, `leave_person_quotas` | dashboard | dashboard |
 | `mbo_threads`, `mbo_entries` | dashboard | dashboard |
+| `punch_fixes` — approved missed-punch fixes (never written to `punches`) | dashboard | dashboard |
+| `payroll_salaries`, `payroll_recommendations`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
 
 ## Local dev with production data
 
