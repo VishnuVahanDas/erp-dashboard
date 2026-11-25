@@ -181,7 +181,7 @@ browser from the threads the tab already loads; there is no extra API.
 | POST | `/api/payroll/recommendations/{id}/decline` | director, the person's manager | `{note}` required |
 | GET  | `/api/payroll/holidays` | signed in | `{day, name}` list |
 | POST, DELETE | `/api/payroll/holidays`, `/api/payroll/holidays/{yyyy-MM-dd}` | director | add/rename `{day, name}` / remove |
-| GET  | `/api/payroll/runs` | director, manager | months with status; managers only see finalized/paid |
+| GET  | `/api/payroll/runs` | director, manager | months with status, `people` and `totalNet`; managers only see finalized/paid months, and their `people` / `totalNet` cover only their reportees (never company totals) |
 | GET  | `/api/payroll/runs/{yyyy-MM}` | director, manager | lines; managers get their reportees, finalized/paid months only |
 | GET  | `/api/payroll/runs/{yyyy-MM}/{accountId}/days` | director, the employee, their manager | day-by-day breakdown (finalized months for non-directors) |
 | POST | `/api/payroll/runs/{yyyy-MM}/generate` | director | (re)builds a draft month; corrections are kept |

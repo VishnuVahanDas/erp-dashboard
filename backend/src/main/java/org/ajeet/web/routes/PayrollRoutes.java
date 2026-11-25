@@ -74,7 +74,7 @@ public class PayrollRoutes implements Routes {
         } else if (method.equals("GET") && path.equals("/payroll/runs")) {
             AuthStore.Account acct = http.requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
             http.send(ex, 200, mapper.createObjectNode().set("runs",
-                    mapper.valueToTree(payroll.runs(!acct.has(AuthStore.DIRECTOR)))));
+                    mapper.valueToTree(payroll.runs(acct.has(AuthStore.DIRECTOR) ? null : acct.id()))));
         } else if (method.equals("GET") && path.matches("/payroll/runs/\\d{4}-\\d{2}")) {
             AuthStore.Account acct = http.requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
             java.time.YearMonth ym = PayrollStore.month(path.substring("/payroll/runs/".length()));

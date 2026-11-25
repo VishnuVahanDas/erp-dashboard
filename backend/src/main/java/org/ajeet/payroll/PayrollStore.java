@@ -487,23 +487,37 @@ public class PayrollStore {
 
     // ----------------------------------------------------------------- runs
 
-    /** All runs (director), or only finalized/paid ones (manager). */
-    public synchronized List<Run> runs(boolean lockedOnly) throws IOException {
+    /**
+     * Runs for the payroll month picker. A director (managerId null) gets every
+     * run with company-wide people / totalNet. A manager gets only
+     * finalized/paid runs, and people / totalNet count only their reportees
+     * (never themselves), the same scope as teamLines. Company totals would
+     * otherwise reveal pay outside their team, including their own and peers'.
+     */
+    public synchronized List<Run> runs(Long managerId) throws IOException {
+        String lineScope = managerId == null ? "" : " AND l.account_id <> ? AND l.account_id IN"
+                + " (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)";
         List<Run> out = new ArrayList<>();
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("""
+        try (PreparedStatement ps = conn.prepareStatement("""
                      SELECT to_char(r.month, 'YYYY-MM'), r.status,
                             (EXTRACT(EPOCH FROM r.generated_at) * 1000)::bigint,
                             (EXTRACT(EPOCH FROM r.finalized_at) * 1000)::bigint,
                             COALESCE(NULLIF(f.full_name,''), f.email), r.paid_on::text,
-                            (SELECT count(*) FROM payroll_lines l WHERE l.month = r.month),
-                            (SELECT COALESCE(SUM(net), 0) FROM payroll_lines l WHERE l.month = r.month)
+                            (SELECT count(*) FROM payroll_lines l WHERE l.month = r.month""" + lineScope + """
+                     ),
+                            (SELECT COALESCE(SUM(net), 0) FROM payroll_lines l WHERE l.month = r.month""" + lineScope + """
+                     )
                      FROM payroll_runs r
                      LEFT JOIN accounts f ON f.id = r.finalized_by
-                     """ + (lockedOnly ? "WHERE r.status <> 'draft' " : "") + "ORDER BY r.month DESC")) {
-            while (rs.next()) {
-                out.add(new Run(rs.getString(1), rs.getString(2), rs.getLong(3), (Long) rs.getObject(4),
-                        rs.getString(5), rs.getString(6), rs.getInt(7), rs.getDouble(8)));
+                     """ + (managerId != null ? "WHERE r.status <> 'draft' " : "") + "ORDER BY r.month DESC")) {
+            if (managerId != null) {
+                for (int i = 1; i <= 4; i++) ps.setLong(i, managerId);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new Run(rs.getString(1), rs.getString(2), rs.getLong(3), (Long) rs.getObject(4),
+                            rs.getString(5), rs.getString(6), rs.getInt(7), rs.getDouble(8)));
+                }
             }
         } catch (SQLException e) {
             throw new IOException("payroll run query failed: " + e.getMessage(), e);
