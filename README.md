@@ -15,9 +15,13 @@ web-dashboard/
 ├── backend/             Java 24+, Maven wrapper -> target/vyom-erp.jar
 │   └── src/main/java/org/ajeet/
 │       ├── Main.java
-│       ├── web/ApiServer.java              REST routes
+│       ├── web/ApiServer.java              HTTP server: CORS, dispatch, errors -> status codes
+│       ├── web/Http.java                   shared JSON / session / role helpers
+│       ├── web/routes/*Routes.java         REST routes, one class per module (Auth, People, Attendance,
+│       │                                   PunchFix, Leave, Mbo, Payroll, Notification, Sync)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
+│       ├── attendance/PunchFixStore.java   missed-punch requests and approved fixes
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
 │       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
 │       ├── mbo/MboStore.java               MBO discussions: propose / acknowledge / deny / suggest

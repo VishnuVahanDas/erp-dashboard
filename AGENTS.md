@@ -13,8 +13,12 @@ documents the API, roles, leave and MBO rules, and the database contract.
 ```
 backend/   Java 24, Maven wrapper, no framework
   src/main/java/org/ajeet/
-    Main.java                    wires the stores and starts ApiServer
-    web/ApiServer.java           all REST routes (JDK com.sun.net.httpserver + Jackson)
+    Main.java                    builds the stores and the route modules, starts ApiServer
+    web/ApiServer.java           server setup, CORS, dispatch to the route modules, errors -> status codes
+    web/Http.java                shared helpers: ObjectMapper, send/readJson, session + role guards, query parsing
+    web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
+    web/routes/<Module>Routes    one per area: Sync, Auth, Attendance, People, Leave, Mbo,
+                                 Notification, PunchFix, Payroll (JDK com.sun.net.httpserver + Jackson)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
@@ -42,9 +46,15 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
   `CREATE TABLE IF NOT EXISTS` (plus any idempotent `ALTER ... IF NOT EXISTS`
   migrations) at startup. There is no migration tool. Schema changes must be
   additive and safe to re-run on a database that already has data.
-- **Routes live in `ApiServer.java`**, and role checks happen there before a
-  store is called. A new feature usually means a new `*Store` package, routes
-  in `ApiServer`, wiring in `Main`, and a new `.jsx` module in the frontend.
+- **Routes live in `web/routes/<Module>Routes.java`; `ApiServer` only
+  dispatches.** Each module implements `Routes`, gets only the stores it needs
+  through its constructor and uses `Http` for JSON and guards. Role checks
+  happen in the route module before a store is called; SQL and business rules
+  stay in the `*Store` classes. `Main` lists the modules in the order they are
+  asked, and inside a module the first matching branch wins, so put a specific
+  path (`/leave/quotas/{id}`) where it can't be shadowed. A new feature usually
+  means a new `*Store` package, a new `*Routes` class, wiring both in `Main`,
+  and a new `.jsx` module in the frontend.
 - **Keep dependencies minimal.** The backend uses only Jackson and the
   PostgreSQL driver; the frontend only React. Don't add a framework or library
   unless the user asks for one.
