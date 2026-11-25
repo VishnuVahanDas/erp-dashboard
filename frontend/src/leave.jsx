@@ -271,16 +271,71 @@ function LeaveForm({ me, balance, holidays = {}, onClose, onSaved }) {
  * team/all endpoints return. remaining counts pending requests as booked,
  * the same way the employee's own tiles do.
  */
-export function makeBalanceOf(usage, quotas) {
+export function makeBalanceOf(usage, quotas, personQuotas) {
   const rows = new Map();
   for (const u of usage || []) rows.set(`${u.accountId}|${u.year}|${u.category}`, u);
+  const own = new Map();
+  for (const q of personQuotas || []) own.set(`${q.accountId}|${q.category}`, q);
   return (accountId, year) => Object.keys(CATS).map((c) => {
     const u = rows.get(`${accountId}|${year}|${c}`);
-    const quota = quotas?.[c] ?? 0;
+    const mine = own.get(`${accountId}|${c}`);
+    const quota = mine ? mine.days : quotas?.[c] ?? 0;
     const used = u?.used ?? 0;
     const pending = u?.pending ?? 0;
-    return { category: c, quota, used, pending, remaining: quota - used - pending };
+    return {
+      category: c, quota, used, pending, remaining: quota - used - pending,
+      custom: !!mine, companyQuota: quotas?.[c] ?? 0, setBy: mine?.setBy, setAt: mine?.setAt,
+    };
   });
+}
+
+/**
+ * One person's yearly days, replacing the company default for them. A
+ * director (anyone) or their manager (reportees) sets it; never your own.
+ * balance = that person's rows from makeBalanceOf.
+ */
+export function PersonQuotaDialog({ me, person, balance, onClose, onDone }) {
+  const name = person.name || person.email;
+  const [q, setQ] = useState(() => Object.fromEntries(balance.map((b) => [b.category, b.custom ? String(b.quota) : ''])));
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      // empty = back to the company default
+      const body = Object.fromEntries(Object.keys(CATS).map((c) => [c, q[c] === '' ? null : Number(q[c])]));
+      await call('PUT', `/api/leave/quotas/${person.id}`, body, me.token);
+      onDone(`Leave quota updated for ${name}`);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="Leave quota" eyebrow={name} onClose={onClose}>
+      <form className="person-form" onSubmit={submit}>
+        <div className="form-grid">
+          {balance.map((b) => (
+            <label key={b.category} className="field">
+              <span>{CATS[b.category].label} days / year</span>
+              <input type="number" min="0" max="365" step="0.5" value={q[b.category]}
+                     placeholder={`${b.companyQuota} (company default)`}
+                     onChange={(e) => setQ({ ...q, [b.category]: e.target.value })} />
+              <small className="dim">{num(b.used)} taken · {num(b.pending)} pending this year
+                {b.custom && b.setBy ? ` · set by ${b.setBy}` : ''}</small>
+            </label>
+          ))}
+        </div>
+        <small className="dim">Leave a box empty to use the company default. Applies to this year and later; leave already approved stays approved.</small>
+        {error && <div className="inline err">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save quota'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 /** "Personal 8 / 12 left · Sick 5 / 6 left" for one employee, in the request's year. */
@@ -371,7 +426,7 @@ function BalanceStats({ balance, year }) {
       {balance.map((b) => (
         <Stat key={b.category} label={`${CATS[b.category].label} leave left`} value={num(b.remaining)} unit={` / ${b.quota}`}
               accent={b.remaining <= 0 ? 'alert' : b.category === 'personal' ? 'cyan' : 'saffron'} icon={icon[b.category]}
-              foot={`${num(b.used)} taken · ${num(b.pending)} pending · ${year}`} />
+              foot={`${num(b.used)} taken · ${num(b.pending)} pending · ${year}${b.custom ? ' · your own quota' : ''}`} />
       ))}
     </div>
   );
@@ -512,7 +567,7 @@ function QuotaDialog({ me, onClose, onDone }) {
               </label>
             ))}
           </div>
-          <small className="dim">Applies to everyone for the current and future years. Requests already approved stay approved.</small>
+          <small className="dim">Applies to everyone without a personal quota, for the current and future years. Set a personal quota from a person’s details in People. Requests already approved stay approved.</small>
           {error && <div className="inline err">{error}</div>}
           <div className="modal-actions">
             <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -544,9 +599,9 @@ export function DashboardLeave({ me, requests, balanceOf, reload, onOpenAll }) {
   const awayNames = [...new Set(away.map((r) => r.name.split(' ')[0]))];
   const upcoming = requests.filter((r) => r.status === 'approved' && r.from > today).length;
 
-  return (
+  return (<>
+    <Toasts notice={notice} error={error} onClose={() => setError(null)} />
     <section className="panel">
-      <Toasts notice={notice} error={error} onClose={() => setError(null)} />
       <div className="panel-head">
         <h3>Leave</h3>
         <div className="leave-act">
@@ -580,12 +635,12 @@ export function DashboardLeave({ me, requests, balanceOf, reload, onOpenAll }) {
           <button className="link dash-leave-more" onClick={onOpenAll}>+{pending.length - SHOW} more waiting — open Leave requests →</button>
         )}
       </>)}
-
-      {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
-                                 onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
-      {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
     </section>
-  );
+
+    {deciding && <DecideDialog me={me} req={deciding.req} approve={deciding.approve} balanceOf={balanceOf} onClose={() => setDeciding(null)}
+                               onDone={(m) => { setDeciding(null); flash(m); reload(); }} />}
+    {quotas && <QuotaDialog me={me} onClose={() => setQuotas(false)} onDone={(m) => { setQuotas(false); flash(m); }} />}
+  </>);
 }
 
 /**

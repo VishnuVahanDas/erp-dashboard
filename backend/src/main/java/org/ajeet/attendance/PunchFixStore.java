@@ -16,6 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -32,6 +33,10 @@ public class PunchFixStore {
 
     private static final int MAX_REASON = 500;
     private static final int MAX_SPAN_MIN = 16 * 60;
+    /** How far back the "you didn't punch properly" reminder looks. */
+    public static final int MISSING_LOOKBACK_DAYS = 31;
+    /** verifyLabel of an approved fix in the punch history views. */
+    public static final String FIX_LABEL = "Manual fix";
 
     private final Connection conn;
 
@@ -44,6 +49,9 @@ public class PunchFixStore {
     public record PunchFix(long id, long accountId, String name, String email, String day, String in, String out,
                            String reason, String status, String decidedBy, Long decidedAt, String decisionNote,
                            long createdAt) {}
+
+    /** A past day with an odd number of device punches (HH:mm, oldest first). */
+    public record MissingDay(String day, List<String> punches) {}
 
     public PunchFixStore(String url, String user, String password) throws IOException {
         try {
@@ -90,6 +98,91 @@ public class PunchFixStore {
 
     public synchronized List<PunchFix> all() throws IOException {
         return fixes("true");
+    }
+
+    /**
+     * Approved fixes as log entries (an in and an out each), newest first, so
+     * the punch history views can show "added by X on request" next to device punches.
+     * enrolls = whose (null = everyone); day range optional. People not linked
+     * to a device user are left out - they have no log.
+     */
+    public synchronized List<AttendanceStore.AttendancePunch> approvedPunches(
+            Collection<Integer> enrolls, LocalDate from, LocalDate toExclusive) throws IOException {
+        if (enrolls != null && enrolls.isEmpty()) return List.of();
+        StringBuilder sql = new StringBuilder("""
+                SELECT a.enroll_number, COALESCE(NULLIF(u.name,''), NULLIF(a.full_name,''), a.email),
+                       f.day::text, to_char(f.in_time, 'HH24:MI:SS'), to_char(f.out_time, 'HH24:MI:SS'),
+                       COALESCE(NULLIF(d.full_name,''), d.email, 'a manager')
+                FROM punch_fixes f
+                JOIN accounts a ON a.id = f.account_id
+                LEFT JOIN users u ON u.enroll_number = a.enroll_number
+                LEFT JOIN accounts d ON d.id = f.decided_by
+                WHERE f.status = 'approved' AND a.enroll_number IS NOT NULL""");
+        List<Object> params = new ArrayList<>();
+        if (enrolls != null) sql.append(" AND a.enroll_number = ANY(?)");
+        if (from != null) { sql.append(" AND f.day >= ?"); params.add(from); }
+        if (toExclusive != null) { sql.append(" AND f.day < ?"); params.add(toExclusive); }
+        sql.append(" ORDER BY f.day DESC LIMIT 1000");
+        List<AttendanceStore.AttendancePunch> out = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            int i = 1;
+            if (enrolls != null) ps.setArray(i++, conn.createArrayOf("integer", enrolls.toArray()));
+            for (Object p : params) ps.setObject(i++, p);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String day = rs.getString(3), by = rs.getString(6);
+                    out.add(new AttendanceStore.AttendancePunch(rs.getInt(1), rs.getString(2),
+                            day + " " + rs.getString(5), FIX_LABEL, by));
+                    out.add(new AttendanceStore.AttendancePunch(rs.getInt(1), rs.getString(2),
+                            day + " " + rs.getString(4), FIX_LABEL, by));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("approved fix query failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
+
+    /**
+     * Past days in the last {@value #MISSING_LOOKBACK_DAYS} days where this
+     * device user has an odd number of punches (an in without an out, or the
+     * other way round) and no fix was asked for yet. Days in a month whose
+     * payroll is locked are skipped - a fix can't be asked for there anyway.
+     */
+    public synchronized List<MissingDay> missingDays(long accountId, Integer enroll) throws IOException {
+        if (enroll == null) return List.of();
+        List<MissingDay> out = new ArrayList<>();
+        boolean payroll = tableExists("payroll_runs");
+        String sql = """
+                SELECT p.punch_time::date AS d,
+                       array_agg(to_char(p.punch_time, 'HH24:MI') ORDER BY p.punch_time)
+                FROM punches p
+                WHERE p.enroll_number = ?
+                  AND p.punch_time >= current_date - ? AND p.punch_time < current_date
+                  AND NOT EXISTS (SELECT 1 FROM punch_fixes f
+                                  WHERE f.account_id = ? AND f.day = p.punch_time::date
+                                    AND f.status <> 'cancelled')
+                """ + (payroll ? """
+                  AND NOT EXISTS (SELECT 1 FROM payroll_runs r
+                                  WHERE r.month = date_trunc('month', p.punch_time)::date
+                                    AND r.status <> 'draft')
+                """ : "") + """
+                GROUP BY 1 HAVING count(*) % 2 = 1
+                ORDER BY 1 DESC""";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, enroll);
+            ps.setInt(2, MISSING_LOOKBACK_DAYS);
+            ps.setLong(3, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new MissingDay(rs.getDate(1).toLocalDate().toString(),
+                            List.of((String[]) rs.getArray(2).getArray())));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("missing punch query failed: " + e.getMessage(), e);
+        }
+        return out;
     }
 
     // ---------------------------------------------------------------- writes
@@ -173,15 +266,21 @@ public class PunchFixStore {
         }
     }
 
+    private boolean tableExists(String table) throws IOException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT to_regclass(?) IS NOT NULL")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getBoolean(1);
+            }
+        } catch (SQLException e) {
+            throw new IOException("table check failed: " + e.getMessage(), e);
+        }
+    }
+
     /** Refuses a day whose month's payroll is finalized or paid (payroll may not exist yet). */
     private void requireOpenMonth(LocalDate d) throws IOException {
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT to_regclass('payroll_runs') IS NOT NULL")) {
-            rs.next();
-            if (!rs.getBoolean(1)) return;
-        } catch (SQLException e) {
-            throw new IOException("payroll check failed: " + e.getMessage(), e);
-        }
+        if (!tableExists("payroll_runs")) return;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT status FROM payroll_runs WHERE month = ? AND status <> 'draft'")) {
             ps.setDate(1, Date.valueOf(d.withDayOfMonth(1)));

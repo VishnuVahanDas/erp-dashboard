@@ -416,7 +416,7 @@ function Performance({ me, threads, onOpenThread }) {
   }, [threads, period]);
   const row = rows.find((r) => r.id === picked);
 
-  return (
+  return (<>
     <section className="panel">
       <div className="panel-head">
         <h3>Performance</h3>
@@ -451,10 +451,10 @@ function Performance({ me, threads, onOpenThread }) {
           </table>
         </div>
       )}
-      {row && <PersonDialog me={me} row={row} period={period} onClose={() => setPicked(null)}
-                            onOpenThread={(id) => { setPicked(null); onOpenThread(id); }} />}
     </section>
-  );
+    {row && <PersonDialog me={me} row={row} period={period} onClose={() => setPicked(null)}
+                          onOpenThread={(id) => { setPicked(null); onOpenThread(id); }} />}
+  </>);
 }
 
 /**

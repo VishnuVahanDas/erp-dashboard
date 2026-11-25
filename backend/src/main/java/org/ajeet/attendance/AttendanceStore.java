@@ -49,8 +49,12 @@ public class AttendanceStore {
         }
     }
 
-    /** One punch row for the portal: name resolved via the users join. */
-    public record AttendancePunch(int enrollNumber, String name, String time, String verifyLabel) {}
+    /**
+     * One punch row for the portal: name resolved via the users join.
+     * addedBy is null for device punches; for an approved missed-punch fix
+     * (see PunchFixStore#approvedPunches) it names who approved it.
+     */
+    public record AttendancePunch(int enrollNumber, String name, String time, String verifyLabel, String addedBy) {}
 
     /** Punches for a single device user, newest first (the employee's own view). */
     public synchronized List<AttendancePunch> punchesFor(int enrollNumber) throws IOException {
@@ -76,7 +80,7 @@ public class AttendanceStore {
             ps.setObject(3, toExclusive);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(new AttendancePunch(rs.getInt(1), rs.getString(2), rs.getString(3), rs.getString(4)));
+                    out.add(new AttendancePunch(rs.getInt(1), rs.getString(2), rs.getString(3), rs.getString(4), null));
                 }
             }
         } catch (SQLException e) {
@@ -118,7 +122,7 @@ public class AttendanceStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),
-                            rs.getString(3), rs.getString(4)));
+                            rs.getString(3), rs.getString(4), null));
                 }
             }
         } catch (SQLException e) {
@@ -154,7 +158,7 @@ public class AttendanceStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new AttendancePunch(rs.getInt(1), rs.getString(2),
-                            rs.getString(3), rs.getString(4)));
+                            rs.getString(3), rs.getString(4), null));
                 }
             }
         } catch (SQLException e) {

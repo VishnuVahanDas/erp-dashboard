@@ -8,7 +8,7 @@ const ago = (ms) => {
   return s < 3600 ? `${Math.max(1, Math.round(s / 60))}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 };
 const ICON = {
-  leave: 'calendar', 'leave-decided': 'calendar', fix: 'clock', 'fix-decided': 'clock',
+  leave: 'calendar', 'leave-decided': 'calendar', fix: 'clock', 'fix-decided': 'clock', 'missed-punch': 'clock',
   recommendation: 'money', salary: 'money', mbo: 'chat',
 };
 
@@ -48,7 +48,7 @@ export function NotificationBell({ me, role, onGo }) {
             <ul>
               {data.items.slice(0, 30).map((n) => (
                 <li key={`${n.kind}${n.id}`}>
-                  <button onClick={() => { setOpen(false); onGo(n.tab); }}>
+                  <button onClick={() => { setOpen(false); onGo(n.tab, n.as); }}>
                     <Icon name={ICON[n.kind] || 'bolt'} size={16} />
                     <span><b>{n.title}</b><small>{n.detail}</small></span>
                     <time>{ago(n.at)}</time>

@@ -19,7 +19,7 @@ backend/   Java 24, Maven wrapper, no framework
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
     sync/SyncRequests.java       "Sync device" queue + agent heartbeat
-    leave/LeaveStore.java        leave requests, approvals, yearly quotas (LTS)
+    leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
     mbo/MboStore.java            MBO threads and entries
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
     config/Env.java              env var / .env lookup
@@ -29,7 +29,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/mbo.jsx    MBO module UI + Performance panel
   src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/team.jsx   People → Teams view and the person details dialog
-  src/punchfix.jsx  missed-punch requests (employee) and approval queue (dashboard)
+  src/punchfix.jsx  missed-punch requests + incomplete-day list (employee) and approval queue (dashboard)
   src/notify.jsx   notifications bell (GET /api/notifications)
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
@@ -51,11 +51,17 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
 - **Roles:** director, manager, employee (one person can hold several). A
   manager only sees people who report to them through `reporting_lines`. Every
   new endpoint must enforce this scoping on the server, not just in the UI.
+  Directors report to nobody: `AuthStore` refuses reporting lines for a
+  director and clears them when someone becomes one.
 - **Audit trails are append-only.** MBO entries are never edited or deleted,
   and leave decisions record who decided and when. Keep it that way.
 - **Time:** punch times are device-local wall-clock times (`LocalDateTime`, no
   zone). Created/decided timestamps are `TIMESTAMPTZ` with `now()` in UTC.
   Don't mix the two.
+- **Render `Modal` and `Toasts` outside `<section className="panel">`** (return a
+  fragment, as `leave.jsx` does). `.panel` has `backdrop-filter`, which makes it
+  the containing block for `position: fixed`, so a dialog inside it is squeezed
+  into the panel instead of covering the screen.
 - Derived views (like the MBO Performance panel) can be computed in the
   frontend from data already loaded when that's enough. Add an API only when
   the data isn't already available.
@@ -83,6 +89,8 @@ docker compose up -d --build                      # full stack as in production 
 There is no automated test suite. Before committing:
 - `cd backend && ./mvnw -q -DskipTests package` must succeed.
 - `cd frontend && npm run build` must succeed.
+- No local JDK 24 / Node? `docker compose build backend web` runs the same
+  Maven and Vite builds inside the images.
 - For behaviour changes, run the app and check the affected flow for each role
   it touches (director / manager / employee).
 

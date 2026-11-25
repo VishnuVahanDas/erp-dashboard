@@ -30,7 +30,7 @@ import java.util.Set;
  *
  * reporting_lines maps an employee to one or more reporting managers, each
  * optionally scoped to a project. A manager sees attendance for the people
- * who report to them; directors see everyone.
+ * who report to them; directors see everyone and report to nobody.
  *
  * accounts.enroll_number links a login to the device identity in `users`.
  * Sessions are opaque bearer tokens (Authorization header).
@@ -288,6 +288,7 @@ public class AuthStore {
             if (in.reportsTo() == null || in.reportsTo().isEmpty())
                 throw new AuthException("pick at least one reporting manager");
         }
+        requireNoLinesForDirector(roles, in.reportsTo());
 
         return inTransaction(() -> {
             long id;
@@ -332,6 +333,9 @@ public class AuthStore {
                 && (!roles.contains(DIRECTOR) || !status.equals("active"));
         if (losesDirector && activeDirectorCount() <= 1)
             throw new AuthException("can't remove the last active director");
+        requireNoLinesForDirector(roles, in.reportsTo());
+        // a director reports to nobody: drop any lines left from before they were made one
+        List<ReportingInput> lines = roles.contains(DIRECTOR) ? List.of() : in.reportsTo();
 
         inTransaction(() -> {
             try (PreparedStatement ps = conn.prepareStatement("""
@@ -351,13 +355,13 @@ public class AuthStore {
                 ps.executeUpdate();
             }
             writeRoles(id, roles);
-            if (in.reportsTo() != null) {
+            if (lines != null) {
                 try (PreparedStatement ps = conn.prepareStatement(
                         "DELETE FROM reporting_lines WHERE employee_id = ?")) {
                     ps.setLong(1, id);
                     ps.executeUpdate();
                 }
-                writeReporting(id, in.reportsTo());
+                writeReporting(id, lines);
             }
             if (!status.equals("active")) dropSessions(id);
             return null;
@@ -444,6 +448,12 @@ public class AuthStore {
         }
         for (String r : ROLES) if (r.equals(EMPLOYEE) || (roles != null && roles.contains(r))) out.add(r);
         return out;
+    }
+
+    /** Directors sit at the top: they don't report to anyone. */
+    private static void requireNoLinesForDirector(Set<String> roles, List<ReportingInput> lines) throws AuthException {
+        if (roles.contains(DIRECTOR) && lines != null && !lines.isEmpty())
+            throw new AuthException("directors don't have a reporting manager - remove the reporting lines");
     }
 
     private void writeRoles(long id, Set<String> roles) throws SQLException {

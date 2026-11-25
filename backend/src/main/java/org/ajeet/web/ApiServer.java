@@ -110,12 +110,17 @@ public class ApiServer {
                 AuthStore.Account acct = requireAccount(ex);
                 if (acct.enrollNumber() == null)
                     throw new ForbiddenException("your account isn't linked to a device user yet - ask a director");
-                send(ex, 200, punchesJson(attendance.punchesFor(acct.enrollNumber())));
+                send(ex, 200, punchesJson(withFixes(attendance.punchesFor(acct.enrollNumber()),
+                        punchFixes.approvedPunches(Set.of(acct.enrollNumber()), null, null))));
             } else if (method.equals("GET") && path.equals("/attendance/team")) {
                 AuthStore.Account acct = requireRole(ex, AuthStore.MANAGER);
                 boolean today = "today".equals(query(ex, "range"));
-                send(ex, 200, punchesJson(attendance.punchesForTeam(
-                        auth.teamEnrolls(acct.id()), today, queryDate(ex))));
+                Set<Integer> enrolls = auth.teamEnrolls(acct.id());
+                java.time.LocalDate date = queryDate(ex);
+                List<AttendanceStore.AttendancePunch> punches = attendance.punchesForTeam(enrolls, today, date);
+                // fixes are only for past days, so "today" never has any
+                send(ex, 200, punchesJson(today ? punches : withFixes(punches,
+                        punchFixes.approvedPunches(enrolls, date, date == null ? null : date.plusDays(1)))));
             } else if (method.equals("GET") && path.matches("/attendance/person/\\d+")) {
                 // one person's month for the People details: directors anyone, managers their reportees
                 AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
@@ -136,14 +141,17 @@ public class ApiServer {
                 out.put("month", ym.toString());
                 out.put("linked", person.enrollNumber() != null);
                 out.set("punches", mapper.valueToTree(person.enrollNumber() == null ? List.of()
-                        : attendance.punchesBetween(person.enrollNumber(), ym.atDay(1), ym.plusMonths(1).atDay(1))));
+                        : withFixes(attendance.punchesBetween(person.enrollNumber(), ym.atDay(1), ym.plusMonths(1).atDay(1)),
+                                punchFixes.approvedPunches(Set.of(person.enrollNumber()), ym.atDay(1), ym.plusMonths(1).atDay(1)))));
                 send(ex, 200, out);
             } else if (method.equals("GET") && path.equals("/attendance/today")) {
                 requireRole(ex, AuthStore.DIRECTOR);
                 send(ex, 200, punchesJson(attendance.punchesToday()));
             } else if (method.equals("GET") && path.equals("/attendance/all")) {
                 requireRole(ex, AuthStore.DIRECTOR);
-                send(ex, 200, punchesJson(attendance.punchesAll(queryDate(ex))));
+                java.time.LocalDate date = queryDate(ex);
+                send(ex, 200, punchesJson(withFixes(attendance.punchesAll(date),
+                        punchFixes.approvedPunches(null, date, date == null ? null : date.plusDays(1)))));
 
             // ---- people: directors manage everyone, managers add employees
             } else if (method.equals("GET") && path.equals("/team")) {
@@ -204,6 +212,7 @@ public class ApiServer {
                 out.set("requests", mapper.valueToTree(leave.forTeam(acct.id())));
                 out.set("usage", mapper.valueToTree(leave.usageForTeam(acct.id())));
                 out.set("quotas", mapper.valueToTree(leave.quotas()));
+                out.set("personQuotas", mapper.valueToTree(leave.personQuotasForTeam(acct.id())));
                 send(ex, 200, out);
             } else if (method.equals("GET") && path.equals("/leave/all")) {
                 requireRole(ex, AuthStore.DIRECTOR);
@@ -211,7 +220,25 @@ public class ApiServer {
                 out.set("requests", mapper.valueToTree(leave.all()));
                 out.set("usage", mapper.valueToTree(leave.usageForAll()));
                 out.set("quotas", mapper.valueToTree(leave.quotas()));
+                out.set("personQuotas", mapper.valueToTree(leave.personQuotasForAll()));
                 send(ex, 200, out);
+            } else if (method.equals("PUT") && path.matches("/leave/quotas/\\d+")) {
+                // one person's own quota: a director for anyone, a manager for reportees (checked in the store)
+                AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+                long id = Long.parseLong(path.substring("/leave/quotas/".length()));
+                if (auth.account(id) == null) throw new IllegalArgumentException("person not found");
+                JsonNode b = readJson(ex);
+                Map<String, Double> q = new LinkedHashMap<>();
+                for (String c : LeaveStore.CATEGORIES) {
+                    if (!b.has(c)) continue;
+                    JsonNode v = b.get(c);
+                    if (v.isNull()) q.put(c, null);
+                    else if (v.isNumber()) q.put(c, v.asDouble());
+                    else throw new IllegalArgumentException(c + " quota must be a number, or null for the company default");
+                }
+                leave.setPersonQuotas(acct, id, q);
+                send(ex, 200, mapper.createObjectNode().set("balance",
+                        mapper.valueToTree(leave.balance(id, leave.currentYear()))));
             } else if (method.equals("GET") && path.equals("/leave/quotas")) {
                 requireAccount(ex);
                 send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));
@@ -264,6 +291,11 @@ public class ApiServer {
             } else if (method.equals("GET") && path.equals("/punch-fixes/my")) {
                 AuthStore.Account acct = requireAccount(ex);
                 send(ex, 200, mapper.createObjectNode().set("fixes", mapper.valueToTree(punchFixes.mine(acct.id()))));
+            } else if (method.equals("GET") && path.equals("/punch-fixes/missing")) {
+                // own past days with an in but no out (or the reverse) and no fix asked for yet
+                AuthStore.Account acct = requireAccount(ex);
+                send(ex, 200, mapper.createObjectNode().set("days",
+                        mapper.valueToTree(punchFixes.missingDays(acct.id(), acct.enrollNumber()))));
             } else if (method.equals("GET") && path.equals("/punch-fixes/team")) {
                 AuthStore.Account acct = requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
                 send(ex, 200, mapper.createObjectNode().set("fixes", mapper.valueToTree(
@@ -583,7 +615,11 @@ public class ApiServer {
                             r.from() + (r.to().equals(r.from()) ? "" : " to " + r.to()) + " · by " + r.decidedBy(), "leave", r.decidedAt()));
             for (PunchFixStore.PunchFix f : punchFixes.mine(me))
                 if (f.decidedAt() != null && f.decidedAt() > weekAgo && !f.status().equals("cancelled"))
-                    out.add(item("fix-decided", f.id(), "Punch fix " + f.status(), f.day() + " · by " + f.decidedBy(), "log", f.decidedAt()));
+                    out.add(item("fix-decided", f.id(),
+                            "Punch fix " + (f.status().equals("rejected") ? "declined" : f.status()),
+                            f.day() + " · by " + f.decidedBy()
+                                    + (f.decisionNote() == null || f.decisionNote().isBlank() ? "" : " - \"" + f.decisionNote() + "\""),
+                            "log", f.decidedAt()));
         } else {
             boolean director = as.equals(AuthStore.DIRECTOR);
             // a manager-view only covers their reportees, even for someone who is also a director
@@ -609,6 +645,19 @@ public class ApiServer {
                         && (t.managerId() == null || t.managerId() == me))
                     out.add(item("mbo", t.id(), "MBO waiting on you · " + t.employeeName(), t.title(), "mbo", t.updatedAt()));
         }
+        // your own incomplete punches, in every role: a manager asks their own reporting manager,
+        // so the item opens the employee Punch history where the fix is requested
+        for (PunchFixStore.MissingDay d : punchFixes.missingDays(me, acct.enrollNumber())) {
+            java.time.LocalDate day = java.time.LocalDate.parse(d.day());
+            String what = d.punches().size() == 1
+                    ? "only one punch (" + d.punches().get(0) + ")"
+                    : d.punches().size() + " punches, the last " + d.punches().get(d.punches().size() - 1);
+            out.add(item("missed-punch", Long.parseLong(d.day().replace("-", "")), "You didn't punch properly",
+                    day.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.ENGLISH))
+                            + ": " + what + " - ask your manager for a fix", "log",
+                    day.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())
+                    .put("as", AuthStore.EMPLOYEE));
+        }
         out.sort((a, b) -> Long.compare(b.path("at").asLong(), a.path("at").asLong()));
         ArrayNode arr = mapper.createArrayNode();
         out.forEach(arr::add);
@@ -629,6 +678,32 @@ public class ApiServer {
         out.put("name", a.name());
         if (a.enrollNumber() != null) out.put("enrollNumber", a.enrollNumber());
         return out;
+    }
+
+    /**
+     * Device punches plus approved fixes, newest first. A fix time within a
+     * minute of a device punch of the same person is left out (it repeats
+     * the punch that was there), so the log shows only what the fix added.
+     */
+    private static List<AttendanceStore.AttendancePunch> withFixes(List<AttendanceStore.AttendancePunch> device,
+                                                                   List<AttendanceStore.AttendancePunch> fixes) {
+        if (fixes.isEmpty()) return device;
+        Map<Integer, List<LocalDateTime>> seen = new java.util.HashMap<>();
+        for (AttendanceStore.AttendancePunch p : device)
+            seen.computeIfAbsent(p.enrollNumber(), k -> new ArrayList<>()).add(at(p));
+        List<AttendanceStore.AttendancePunch> out = new ArrayList<>(device);
+        for (AttendanceStore.AttendancePunch f : fixes) {
+            LocalDateTime t = at(f);
+            boolean dup = seen.getOrDefault(f.enrollNumber(), List.of()).stream()
+                    .anyMatch(d -> Math.abs(java.time.Duration.between(d, t).toSeconds()) <= 60);
+            if (!dup) out.add(f);
+        }
+        out.sort((a, b) -> b.time().compareTo(a.time()));
+        return out;
+    }
+
+    private static LocalDateTime at(AttendanceStore.AttendancePunch p) {
+        return LocalDateTime.parse(p.time().replace(' ', 'T'));
     }
 
     private JsonNode punchesJson(List<AttendanceStore.AttendancePunch> punches) {

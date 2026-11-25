@@ -103,7 +103,9 @@ function Shell({ me, ctx, nav, tab, setTab, title, subtitle, actions, children }
             <h1>{title}</h1>
           </div>
           <div className="head-right">
-            <NotificationBell me={me} role={ctx.role} onGo={setTab} />
+            {/* an item can belong to another role (your own missed punch while viewing as manager) */}
+            <NotificationBell me={me} role={ctx.role}
+                              onGo={(t, as) => (as && as !== ctx.role ? ctx.switchRole(as, t) : setTab(t))} />
             <Clock />
             {actions}
           </div>
@@ -133,7 +135,9 @@ function AgentChip({ agent }) {
   );
 }
 
-function ModeTag({ label }) {
+/** How a punch was recorded; an approved missed-punch fix says who added it. */
+function ModeTag({ label, addedBy }) {
+  if (addedBy) return <span className="mode-tag manual" title="Not from the device: an approved missed-punch request">Added by {addedBy} on request</span>;
   const k = (label || '').toLowerCase();
   const cls = k.includes('face') ? 'face' : k.includes('card') ? 'card' : k.includes('finger') ? 'finger' : 'other';
   return <span className={`mode-tag ${cls}`}>{label || '—'}</span>;
@@ -227,13 +231,13 @@ function PunchTable({ punches, showName, empty = 'No punches recorded yet.' }) {
         </thead>
         <tbody>
           {punches.map((p, i) => (
-            <tr key={i}>
+            <tr key={i} className={p.addedBy ? 'manual-row' : ''}>
               {showName && (
                 <td><div className="who"><Avatar label={p.name || `#${p.enrollNumber}`} /><span>{p.name || `Crew #${p.enrollNumber}`}<small>#{p.enrollNumber}</small></span></div></td>
               )}
               <td className="mono dim">{dayOf(p.time)}</td>
               <td className="mono strong">{hhmm(p.time)}</td>
-              <td><ModeTag label={p.verifyLabel} /></td>
+              <td><ModeTag label={p.verifyLabel} addedBy={p.addedBy} /></td>
             </tr>
           ))}
         </tbody>
@@ -262,10 +266,14 @@ function HourChart({ punches }) {
 /* ------------------------------------------------------------- employee */
 
 function EmployeeView({ me, ctx }) {
-  const [tab, setTab] = useState('home');
+  const [tab, setTab] = useState(ctx.startTab || 'home');
   const [punches, setPunches] = useState([]);
+  const [myFixes, setMyFixes] = useState([]); // own punch-fix requests, from MyPunchFixes
   const [error, setError] = useState(null);
   const linked = me.enrollNumber != null;
+  // latest live request per day (the list is newest first), for the Note column
+  const fixByDay = {};
+  for (const f of myFixes) if (f.status !== 'cancelled' && !fixByDay[f.day]) fixByDay[f.day] = f;
 
   const load = useCallback(async () => {
     if (!linked) return;
@@ -312,13 +320,13 @@ function EmployeeView({ me, ctx }) {
     <Shell me={me} ctx={ctx} tab={tab} setTab={setTab}
            nav={[
              { key: 'home', label: 'My dashboard', icon: 'radar' },
-             { key: 'log', label: 'Flight log', icon: 'log' },
+             { key: 'log', label: 'Punch history', icon: 'log' },
              { key: 'leave', label: 'Leave', icon: 'calendar' },
              { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
              { key: 'payslips', label: 'Payslips', icon: 'money' },
            ]}
            subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Objectives & discussions', payslips: 'Payroll' }[tab] || 'Personal history'}
-           title={{ home: name, leave: 'My leave', mbo: 'My MBOs', payslips: 'My payslips' }[tab] || 'My flight log'}>
+           title={{ home: name, leave: 'My leave', mbo: 'My MBOs', payslips: 'My payslips' }[tab] || 'My punch history'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
       {tab === 'home' && <LeaveBalance me={me} />}
@@ -377,7 +385,7 @@ function EmployeeView({ me, ctx }) {
                   <li key={i} className={i % 2 === 0 ? 'in' : 'out'}>
                     <b className="mono">{hhmm(p.time)}</b>
                     <span>{i % 2 === 0 ? 'Checked in' : 'Checked out'}</span>
-                    <ModeTag label={p.verifyLabel} />
+                    <ModeTag label={p.verifyLabel} addedBy={p.addedBy} />
                   </li>
                 ))}
               </ol>
@@ -386,24 +394,35 @@ function EmployeeView({ me, ctx }) {
         </div>
       </>)}
 
-      {tab === 'log' && <MyPunchFixes me={me} />}
+      {tab === 'log' && <MyPunchFixes me={me} onLoaded={setMyFixes} />}
 
       {linked && tab === 'log' && (
         <section className="panel">
           {Object.keys(days).length === 0 ? <Empty title="No history yet" hint="Your punches will appear here once synced." /> : (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Date</th><th>First in</th><th>Last out</th><th>Duration</th><th>Punches</th></tr></thead>
+                <thead><tr><th>Date</th><th>First in</th><th>Last out</th><th>Duration</th><th>Punches</th><th>Note</th></tr></thead>
                 <tbody>
-                  {Object.entries(days).map(([d, list]) => (
-                    <tr key={d}>
-                      <td className="strong">{new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}</td>
-                      <td className="mono">{hhmm(list[0].time)}</td>
-                      <td className="mono">{list.length > 1 ? hhmm(list[list.length - 1].time) : '—'}</td>
-                      <td className="mono strong">{fmtDuration(list.length > 1 ? minutesBetween(list[0].time, list[list.length - 1].time) : 0)}</td>
-                      <td><span className="count">{list.length}</span></td>
-                    </tr>
-                  ))}
+                  {Object.entries(days).map(([d, list]) => {
+                    const added = list.filter((p) => p.addedBy);
+                    const incomplete = list.length % 2 === 1 && d !== todayStr();
+                    const fix = fixByDay[d];
+                    return (
+                      <tr key={d} className={added.length ? 'manual-row' : ''}>
+                        <td className="strong">{new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}</td>
+                        <td className={`mono ${list[0].addedBy ? 'manual-time' : ''}`}>{hhmm(list[0].time)}</td>
+                        <td className={`mono ${list.length > 1 && list[list.length - 1].addedBy ? 'manual-time' : ''}`}>{list.length > 1 ? hhmm(list[list.length - 1].time) : '—'}</td>
+                        <td className="mono strong">{fmtDuration(list.length > 1 ? minutesBetween(list[0].time, list[list.length - 1].time) : 0)}</td>
+                        <td><span className="count">{list.length}</span></td>
+                        <td className="note-cell">{added.length
+                          ? <ModeTag addedBy={added[0].addedBy} />
+                          : incomplete ? <span className="pay-flag">missing punch</span> : <span className="dim">—</span>}
+                          {fix?.status === 'approved' && fix.decisionNote && <small className="sub">“{fix.decisionNote}”</small>}
+                          {fix?.status === 'rejected' && <small className="sub">declined by {fix.decidedBy || '—'}{fix.decisionNote ? ` — “${fix.decisionNote}”` : ''}</small>}
+                          {fix?.status === 'pending' && <small className="sub">fix requested · waiting for approval</small>}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -466,7 +485,9 @@ function PersonForm({ me, isDirector, person, onClose, onSaved }) {
   const managers = opts.managers.filter((m) => m.id !== person?.id);
   const deviceUsers = { ...opts.deviceUsers };
   if (person?.enrollNumber != null) deviceUsers[person.enrollNumber] = `${person.name || person.email} (current)`;
-  // managers must name a reporting manager; directors may leave it empty (e.g. for other directors)
+  // directors sit at the top and report to nobody
+  const topLevel = roles.includes('director');
+  // managers must name a reporting manager; directors may leave it empty
   const needsManager = !isDirector;
 
   const toggleRole = (r) => setRoles((rs) => rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]);
@@ -476,7 +497,8 @@ function PersonForm({ me, isDirector, person, onClose, onSaved }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const reportsTo = lines.filter((l) => l.managerId).map((l) => ({ managerId: Number(l.managerId), project: l.project.trim() }));
+      const reportsTo = topLevel ? []
+        : lines.filter((l) => l.managerId).map((l) => ({ managerId: Number(l.managerId), project: l.project.trim() }));
       if (needsManager && reportsTo.length === 0) throw new Error('pick at least one reporting manager');
       const body = {
         name, enrollNumber: enroll === '' ? null : Number(enroll), reportsTo,
@@ -549,6 +571,12 @@ function PersonForm({ me, isDirector, person, onClose, onSaved }) {
           </fieldset>
         )}
 
+        {topLevel ? (
+          <div className="field">
+            <span>Reporting managers</span>
+            <small className="dim">Directors don’t report to anyone{editing && person.reportsTo?.length ? ' — their old reporting lines are removed when you save' : ''}.</small>
+          </div>
+        ) : (
         <fieldset className="field">
           <span>Reporting managers {needsManager && <em className="req">required</em>}</span>
           <div className="lines">
@@ -571,6 +599,7 @@ function PersonForm({ me, isDirector, person, onClose, onSaved }) {
           </div>
           <small className="dim">One person can report to different managers on different projects.</small>
         </fieldset>
+        )}
 
         {editing && (
           <label className="field">
@@ -656,7 +685,7 @@ function PasswordDialog({ me, onClose }) {
  */
 function OpsView({ me, ctx, scope }) {
   const isDirector = scope === 'director';
-  const [tab, setTab] = useState('today');
+  const [tab, setTab] = useState(ctx.startTab || 'today');
   const [today, setToday] = useState([]);
   const [all, setAll] = useState([]);
   const [people, setPeople] = useState([]);
@@ -690,7 +719,7 @@ function OpsView({ me, ctx, scope }) {
     try {
       const d = await call('GET', isDirector ? '/api/leave/all' : '/api/leave/team', null, me.token);
       setLeaves(d.requests || []);
-      setLeaveBalanceOf(() => makeBalanceOf(d.usage, d.quotas));
+      setLeaveBalanceOf(() => makeBalanceOf(d.usage, d.quotas, d.personQuotas));
     } catch (e) { setError(e.message); }
   }, [me.token, isDirector]);
 
@@ -758,7 +787,7 @@ function OpsView({ me, ctx, scope }) {
   const peopleLabel = isDirector ? 'People' : 'My team';
   const titles = {
     today: [isDirector ? 'Dashboard' : 'Team today', isDirector ? 'Live operations' : 'Your reportees'],
-    all: [isDirector ? 'Flight log' : 'Team log', isDirector ? 'All punches' : 'Team punches'],
+    all: [isDirector ? 'Punch history' : 'Team punches', isDirector ? 'All punches' : 'Your reportees'],
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
     mbo: ['MBOs', isDirector ? 'Everyone · objectives & discussions' : 'Your team · objectives & discussions'],
@@ -772,7 +801,7 @@ function OpsView({ me, ctx, scope }) {
            title={titles[tab][0]} subtitle={titles[tab][1]}
            nav={[
              { key: 'today', label: isDirector ? 'Dashboard' : 'Team today', icon: 'radar' },
-             { key: 'all', label: isDirector ? 'Flight log' : 'Team log', icon: 'log' },
+             { key: 'all', label: isDirector ? 'Punch history' : 'Team punches', icon: 'log' },
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
              { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
              { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
@@ -907,7 +936,8 @@ function OpsView({ me, ctx, scope }) {
         </section>
       )}
 
-      {viewing && <PersonDialog me={me} person={viewing} leaves={leaves} balanceOf={leaveBalanceOf} mbos={mbos} onClose={() => setViewing(null)} />}
+      {viewing && <PersonDialog me={me} person={viewing} leaves={leaves} balanceOf={leaveBalanceOf} mbos={mbos}
+                                onLeaveChanged={loadLeave} onClose={() => setViewing(null)} />}
 
       {tab === 'leave' && <OpsLeave me={me} isDirector={isDirector} requests={leaves} balanceOf={leaveBalanceOf} reload={loadLeave} />}
       {tab === 'mbo' && <OpsMbo me={me} isDirector={isDirector} threads={mbos} people={people} reload={loadMbo} />}
@@ -937,6 +967,7 @@ function pickRole(me) {
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = restoring session
   const [role, setRole] = useState('employee');
+  const [startTab, setStartTab] = useState(null); // tab to open after a role switch
   const [pwOpen, setPwOpen] = useState(false);
   const token = me?.token || store.get(TOKEN_KEY);
 
@@ -980,7 +1011,8 @@ export default function App() {
 
   const ctx = {
     role,
-    switchRole: (r) => { store.set(roleKey(me.id), r); setRole(r); },
+    startTab,
+    switchRole: (r, tab = null) => { store.set(roleKey(me.id), r); setStartTab(tab); setRole(r); },
     logout,
     refreshMe,
     openPassword: () => setPwOpen(true),

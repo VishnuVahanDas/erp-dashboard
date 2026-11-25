@@ -30,9 +30,11 @@ import java.util.Set;
  * employee's reporting managers, or any director, may approve or reject; the
  * first decision wins. Nobody decides their own request.
  *
- * Quotas are company-wide days per calendar year per category. A request must
- * fit in (approved + pending + new) <= quota, so one request can't span two
- * years - the employee files one per year.
+ * Quotas are days per calendar year per category: a company-wide default
+ * (leave_quotas, set by directors) that a director or the person's manager
+ * can override for one person (leave_person_quotas; never for themselves).
+ * A request must fit in (approved + pending + new) <= that person's quota,
+ * so one request can't span two years - the employee files one per year.
  *
  * Cancelling: the employee may cancel while pending, or while approved and not
  * yet started. Approvers may cancel any pending/approved request in their scope.
@@ -60,8 +62,12 @@ public class LeaveStore {
                                String status, long appliedAt, Long decidedAt, String decidedBy,
                                String note, Long cancelledAt, String cancelledBy) {}
 
-    /** Days for one category in one year. remaining = quota - used - pending. */
-    public record Balance(String category, double quota, double used, double pending, double remaining) {}
+    /** Days for one category in one year. remaining = quota - used - pending; custom = a personal quota. */
+    public record Balance(String category, double quota, double used, double pending, double remaining,
+                          boolean custom) {}
+
+    /** A personal quota that replaces the company default for one person and category. */
+    public record PersonQuota(long accountId, String category, double days, String setBy, long setAt) {}
 
     /** Approved and pending days for one person, category and calendar year (approver views). */
     public record Usage(long accountId, int year, String category, double used, double pending) {}
@@ -99,6 +105,15 @@ public class LeaveStore {
                         CREATE TABLE IF NOT EXISTS leave_quotas (
                             category      TEXT PRIMARY KEY CHECK (category IN ('personal','sick')),
                             days_per_year NUMERIC(5,1) NOT NULL CHECK (days_per_year >= 0)
+                        )""");
+                st.execute("""
+                        CREATE TABLE IF NOT EXISTS leave_person_quotas (
+                            account_id    BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                            category      TEXT NOT NULL CHECK (category IN ('personal','sick')),
+                            days_per_year NUMERIC(5,1) NOT NULL CHECK (days_per_year >= 0),
+                            set_by        BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+                            set_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+                            PRIMARY KEY (account_id, category)
                         )""");
             }
             for (var q : DEFAULT_QUOTAS.entrySet()) {
@@ -158,14 +173,66 @@ public class LeaveStore {
     /** Per-category balance for one account in one calendar year. */
     public synchronized List<Balance> balance(long accountId, int year) throws IOException {
         Map<String, Double> quotas = quotas();
+        Map<String, Double> own = ownQuotas(accountId);
         List<Balance> out = new ArrayList<>();
         for (String c : CATEGORIES) {
             double used = sumDays(accountId, c, year, "approved");
             double pending = sumDays(accountId, c, year, "pending");
-            double quota = quotas.get(c);
-            out.add(new Balance(c, quota, used, pending, quota - used - pending));
+            double quota = own.getOrDefault(c, quotas.get(c));
+            out.add(new Balance(c, quota, used, pending, quota - used - pending, own.containsKey(c)));
         }
         return out;
+    }
+
+    /** Personal quotas of this manager's reportees - same scope as forTeam. */
+    public synchronized List<PersonQuota> personQuotasForTeam(long managerId) throws IOException {
+        return personQuotas("""
+                q.account_id <> ? AND q.account_id IN
+                    (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)""", managerId, managerId);
+    }
+
+    /** Everyone's personal quotas - same scope as all(). */
+    public synchronized List<PersonQuota> personQuotasForAll() throws IOException {
+        return personQuotas("true");
+    }
+
+    /**
+     * A director (anyone) or the person's manager (reportees) sets their own
+     * yearly days per category; a null value goes back to the company default.
+     * Categories not in the map are left as they are. Never your own quota.
+     */
+    public synchronized void setPersonQuotas(AuthStore.Account who, long accountId, Map<String, Double> in) throws IOException {
+        if (accountId == who.id()) throw new ForbiddenException("you can't set your own leave quota");
+        if (!canManage(who, accountId))
+            throw new ForbiddenException("only a director or this person's manager can set their leave quota");
+        for (var e : in.entrySet()) {
+            if (!CATEGORIES.contains(e.getKey())) throw new IllegalArgumentException("unknown category " + e.getKey());
+            Double v = e.getValue();
+            if (v != null && (v < 0 || v > 365 || v * 2 != Math.floor(v * 2)))
+                throw new IllegalArgumentException(e.getKey() + " quota must be 0-365 in steps of 0.5");
+        }
+        try (PreparedStatement up = conn.prepareStatement("""
+                INSERT INTO leave_person_quotas (account_id, category, days_per_year, set_by) VALUES (?, ?, ?, ?)
+                ON CONFLICT (account_id, category) DO UPDATE
+                SET days_per_year = EXCLUDED.days_per_year, set_by = EXCLUDED.set_by, set_at = now()""");
+             PreparedStatement del = conn.prepareStatement(
+                     "DELETE FROM leave_person_quotas WHERE account_id = ? AND category = ?")) {
+            for (var e : in.entrySet()) {
+                if (e.getValue() == null) {
+                    del.setLong(1, accountId);
+                    del.setString(2, e.getKey());
+                    del.executeUpdate();
+                } else {
+                    up.setLong(1, accountId);
+                    up.setString(2, e.getKey());
+                    up.setDouble(3, e.getValue());
+                    up.setLong(4, who.id());
+                    up.executeUpdate();
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("personal quota update failed: " + e.getMessage(), e);
+        }
     }
 
     public synchronized int currentYear() throws IOException {
@@ -205,7 +272,7 @@ public class LeaveStore {
         String clash = overlap(who.id(), from, to, half);
         if (clash != null) throw new IllegalArgumentException(clash);
 
-        double quota = quotas().get(category);
+        double quota = quotaOf(who.id(), category);
         double booked = sumDays(who.id(), category, from.getYear(), "approved")
                 + sumDays(who.id(), category, from.getYear(), "pending");
         if (booked + days > quota)
@@ -243,7 +310,7 @@ public class LeaveStore {
             throw new IllegalArgumentException("this request is already " + r.status());
         if (approve) {
             int year = LocalDate.parse(r.from()).getYear();
-            double quota = quotas().get(r.category());
+            double quota = quotaOf(r.accountId(), r.category());
             double used = sumDays(r.accountId(), r.category(), year, "approved");
             if (used + r.days() > quota)
                 throw new IllegalArgumentException(String.format(
@@ -315,6 +382,38 @@ public class LeaveStore {
     }
 
     // --------------------------------------------------------------- helpers
+
+    /** This person's quota for a category: their personal one, else the company default. */
+    private double quotaOf(long accountId, String category) throws IOException {
+        Double own = ownQuotas(accountId).get(category);
+        return own != null ? own : quotas().get(category);
+    }
+
+    /** category -> days for the personal quotas this account has (may be empty). */
+    private Map<String, Double> ownQuotas(long accountId) throws IOException {
+        Map<String, Double> out = new LinkedHashMap<>();
+        for (PersonQuota q : personQuotas("q.account_id = ?", accountId)) out.put(q.category(), q.days());
+        return out;
+    }
+
+    private List<PersonQuota> personQuotas(String where, Object... params) throws IOException {
+        List<PersonQuota> out = new ArrayList<>();
+        String sql = """
+                SELECT q.account_id, q.category, q.days_per_year, COALESCE(NULLIF(s.full_name,''), s.email),
+                       (EXTRACT(EPOCH FROM q.set_at) * 1000)::bigint
+                FROM leave_person_quotas q LEFT JOIN accounts s ON s.id = q.set_by
+                """ + "WHERE " + where + " ORDER BY q.account_id, q.category";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(new PersonQuota(rs.getLong(1), rs.getString(2), rs.getDouble(3),
+                        rs.getString(4), rs.getLong(5)));
+            }
+        } catch (SQLException e) {
+            throw new IOException("personal quota query failed: " + e.getMessage(), e);
+        }
+        return out;
+    }
 
     /** One grouped query: approved + pending days per account / year / category. */
     private List<Usage> usage(String where, Object... params) throws IOException {

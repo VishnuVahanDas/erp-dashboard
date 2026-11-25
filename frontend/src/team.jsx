@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Avatar, Empty, Icon, Modal, call, fmtDuration, groupByDay, minutesBetween, todayStr } from './ui.jsx';
 import { hrs, money, monthLabel } from './payroll.jsx';
+import { PersonQuotaDialog } from './leave.jsx';
 
 const CAT = { personal: 'Personal', sick: 'Sick' };
 const LEAVE_PILL = { approved: 'live', pending: 'warn', rejected: 'bad', cancelled: 'idle' };
@@ -75,7 +76,8 @@ export function TeamsView({ people, leaves, onOpenPerson }) {
   const [open, setOpen] = useState(null); // managerId | 'none'
   const active = people.filter((p) => p.status === 'active');
   const teams = useMemo(() => buildTeams(active), [people]); // eslint-disable-line react-hooks/exhaustive-deps
-  const noTeam = active.filter((p) => !(p.reportsTo || []).length);
+  // directors report to nobody, so they aren't "missing" a team
+  const noTeam = active.filter((p) => !(p.reportsTo || []).length && !(p.roles || []).includes('director'));
   const inactive = people.length - active.length;
 
   if (open != null) {
@@ -93,7 +95,7 @@ export function TeamsView({ people, leaves, onOpenPerson }) {
         </div>
         {open === 'none' ? (
           <div className="team-head"><div><span className="eyebrow">No manager</span><h3>People not in a team</h3>
-            <small className="dim">Directors at the top, or people nobody has been set to manage.</small></div></div>
+            <small className="dim">People nobody has been set to manage (directors don’t need a manager).</small></div></div>
         ) : (
           <div className="team-head mbo-row" onClick={() => t?.manager && onOpenPerson(t.manager)} title="Open the manager's details">
             <Avatar label={t?.managerName} />
@@ -235,9 +237,13 @@ function Payroll({ me, person }) {
  * parent already loaded (scoped to the viewer); attendance and payroll are
  * fetched here through scoped endpoints.
  */
-export function PersonDialog({ me, person, leaves, balanceOf, mbos, onClose }) {
+export function PersonDialog({ me, person, leaves, balanceOf, mbos, onLeaveChanged, onClose }) {
   const year = new Date().getFullYear();
   const balance = balanceOf ? balanceOf(person.id, year) : [];
+  const [quotaOpen, setQuotaOpen] = useState(false);
+  const [saved, setSaved] = useState(null);
+  // a director for anyone, a manager for their reportees (the only people they can open); never yourself
+  const canSetQuota = person.id !== me.id && balance.length > 0;
   const theirLeave = leaves.filter((r) => r.accountId === person.id);
   const threads = mbos.filter((t) => t.employeeId === person.id);
   const agreed = threads.filter((t) => t.status === 'acknowledged').length;
@@ -245,8 +251,9 @@ export function PersonDialog({ me, person, leaves, balanceOf, mbos, onClose }) {
   const open = threads.filter((t) => t.status === 'open');
   const managers = (person.reportsTo || []).map((l) => l.managerName);
 
-  return (
-    <Modal title={person.name || person.email} eyebrow="Person" onClose={onClose}>
+  return (<>
+    {/* while the quota dialog is open, Escape / backdrop close only that one */}
+    <Modal title={person.name || person.email} eyebrow="Person" onClose={quotaOpen ? () => {} : onClose}>
       <div className="person-top">
         <Avatar label={person.name || person.email} />
         <div>
@@ -261,16 +268,19 @@ export function PersonDialog({ me, person, leaves, balanceOf, mbos, onClose }) {
       </div>
 
       <section className="person-sec">
-        <div className="person-sec-head"><h4><Icon name="calendar" size={15} />Leave {year}</h4></div>
+        <div className="person-sec-head"><h4><Icon name="calendar" size={15} />Leave {year}</h4>
+          {canSetQuota && <button className="btn ghost small" onClick={() => setQuotaOpen(true)}><Icon name="edit" size={15} />Edit quota</button>}
+        </div>
         <div className="person-tiles">
           {balance.map((b) => (
             <div key={b.category} className={b.remaining <= 0 ? 'warn' : ''}>
               <span>{CAT[b.category]} leave</span>
               <b>{num(b.remaining)}<em> / {b.quota} left</em></b>
-              <small>{num(b.used)} taken · {num(b.pending)} pending</small>
+              <small>{num(b.used)} taken · {num(b.pending)} pending · {b.custom ? 'own quota' : 'company default'}</small>
             </div>
           ))}
         </div>
+        {saved && <div className="inline ok">{saved}</div>}
         {theirLeave.length > 0 ? (
           <ul className="perf-list person-list">
             {theirLeave.slice(0, 5).map((r) => (
@@ -297,5 +307,7 @@ export function PersonDialog({ me, person, leaves, balanceOf, mbos, onClose }) {
         </div>
       </section>
     </Modal>
-  );
+    {quotaOpen && <PersonQuotaDialog me={me} person={person} balance={balance} onClose={() => setQuotaOpen(false)}
+                                     onDone={(m) => { setQuotaOpen(false); setSaved(m); onLeaveChanged?.(); }} />}
+  </>);
 }
