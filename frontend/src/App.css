@@ -19,6 +19,7 @@
   --red: #ff5d73;
   --red-rgb: 255, 93, 115;
   --green: #3ddc84;
+  --green-rgb: 61, 220, 132;
   --tint-rgb: 255, 255, 255;   /* subtle overlays on panels */
   --well-rgb: 6, 11, 24;       /* inputs, inset cards */
   --cyan-soft: rgba(var(--cyan-rgb), 0.14);
@@ -56,6 +57,7 @@
   --red: #d42a46;
   --red-rgb: 212, 42, 70;
   --green: #138a4c;
+  --green-rgb: 19, 138, 76;
   --tint-rgb: 15, 26, 51;
   --well-rgb: 244, 247, 252;
   --on-accent: #ffffff;
@@ -598,6 +600,7 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .cat-tag.personal { color: var(--cyan); border-color: rgba(var(--cyan-rgb), 0.4); }
 .cat-tag.sick { color: var(--blue); border-color: rgba(var(--blue-rgb), 0.45); }
+.cat-tag.holiday { color: var(--blue); border-color: rgba(var(--blue-rgb), 0.3); background: rgba(var(--blue-rgb), 0.1); }
 .leave-what { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* calendar — kept compact: capped width, centred in its panel */
@@ -641,6 +644,42 @@ tbody tr:last-child td { border-bottom: none; }
 .hol-next { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; max-width: 460px; margin: 12px auto 0; font-size: 12px; color: var(--muted); }
 .hol-next .icon { color: var(--blue); }
 .hol-next b { color: var(--text); }
+
+/* My calendar (calendar.jsx): the leave calendar's compact size, with attendance on each day */
+.wcal .cal-day {
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+}
+.wcal .cal-day:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.wcal .cal-day:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.wcal-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; min-width: 0; }
+.wcal-foot em { font-style: normal; font-family: var(--mono); font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wcal-foot em.tag { margin-left: auto; color: var(--muted); }
+.wcal-foot em.lv { color: var(--c); }
+.wcal-foot em.hol { font-family: inherit; font-size: 8px; font-weight: 600; color: var(--blue); overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
+.wcal .cal-day.present { background: rgba(var(--green-rgb), 0.08); border-color: rgba(var(--green-rgb), 0.35); }
+.wcal .cal-day.present em.tag { color: var(--green); }
+.wcal .cal-day.short, .wcal .cal-day.missing { background: var(--saffron-soft); border-color: rgba(var(--saffron-rgb), 0.45); }
+.wcal .cal-day.short em.tag, .wcal .cal-day.missing em.tag { color: var(--saffron); }
+.wcal .cal-day.absent { background: var(--red-soft); border-color: rgba(var(--red-rgb), 0.4); }
+.wcal .cal-day.absent em.tag { color: var(--red); }
+.wcal .cal-day.future > span, .wcal .cal-day.none > span { color: var(--dim); }
+.wcal .cal-day.today em.tag { color: var(--cyan); }
+.wcal-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 12px; font-size: 12px; color: var(--muted); justify-content: center; }
+.wcal-facts b { color: var(--text); font-family: var(--mono); margin-right: 5px; }
+.wcal-facts .bad b { color: var(--red); }
+.wcal-facts .warn b { color: var(--saffron); }
+.wcal-note { margin: 10px 0 0; font-size: 12px; }
+.sw.present { background: rgba(var(--green-rgb), 0.3); border-color: var(--green); }
+.sw.short { background: rgba(var(--saffron-rgb), 0.3); border-color: var(--saffron); }
+.sw.absent { background: rgba(var(--red-rgb), 0.3); border-color: var(--red); }
+
+.wcal-day { display: flex; flex-direction: column; gap: 12px; }
+.wcal-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.wcal-row { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+.wcal-row .pill { margin-left: 8px; }
+.wcal-day .duty-facts { margin-top: 0; max-width: none; }
+.wcal-day .timeline li small { margin-left: auto; }
 
 /* apply form */
 .cat-picks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -702,6 +741,8 @@ tbody tr:last-child td { border-bottom: none; }
   .cal-day > span { font-size: 11px; }
   .cal-day > em { font-size: 9px; }
   .cal-wd { font-size: 9px; letter-spacing: 0.04em; }
+  .wcal-foot em.hol, .wcal-foot em.tag { font-size: 8px; }
+  .wcal-day .duty-facts { grid-template-columns: repeat(2, 1fr); }
   .cal-head > div { min-width: 0; flex: 1; }
   .cat-picks { grid-template-columns: 1fr; }
   .leave-cards { grid-template-columns: 1fr; }
@@ -791,6 +832,10 @@ tr.month-row span { font-size: 12px; color: var(--muted); }
 .pay-propose > span:last-child b { color: var(--cyan); }
 .pay-sections .nav-count { margin-left: 6px; }
 .pay-foot { margin-top: 8px; font-size: 12px; }
+.pay-sub { font-size: 12px; color: var(--muted); margin: 4px 0 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+button.link.who { text-align: left; color: inherit; font: inherit; }
+button.link.who:hover > span { color: var(--cyan); }
+.ot-box { margin-bottom: 14px; }
 .pay-days-sum { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
 .pay-days-sum b { color: var(--text); font-family: var(--mono); }
 .pay-days-sum .warn { color: var(--saffron); }

@@ -7,6 +7,7 @@ import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
+import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.web.routes.Routes;
 
@@ -61,7 +62,8 @@ public class ApiServer {
         } catch (AuthStore.AuthException e) {
             http.send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (Http.ForbiddenException | LeaveStore.ForbiddenException | MboStore.ForbiddenException
-                 | PayrollStore.ForbiddenException | PunchFixStore.ForbiddenException e) {
+                 | PayrollStore.ForbiddenException | PunchFixStore.ForbiddenException
+                 | OvertimeStore.ForbiddenException e) {
             http.send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             http.send(ex, 400, mapper.createObjectNode().put("error", e.getMessage()));

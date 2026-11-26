@@ -18,7 +18,7 @@ web-dashboard/
 │       ├── web/ApiServer.java              HTTP server: CORS, dispatch, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers
 │       ├── web/routes/*Routes.java         REST routes, one class per module (Auth, People, Attendance,
-│       │                                   PunchFix, Leave, Mbo, Payroll, Notification, Sync)
+│       │                                   PunchFix, Leave, Mbo, Payroll, Overtime, Notification, Sync)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
 │       ├── attendance/PunchFixStore.java   missed-punch requests and approved fixes
@@ -26,6 +26,7 @@ web-dashboard/
 │       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
 │       ├── mbo/MboStore.java               weekly MBOs ("Objectives" in the UI, 6 per manager per week): propose / acknowledge / deny / suggest, expiry
 │       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
+│       ├── overtime/OvertimeStore.java     overtime claims and approvals (quarter-day tiers)
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
@@ -150,6 +151,16 @@ their home page. Approvers see the employee's Personal and Sick balance (for
 the request's year, pending counted as booked) on each pending request and in
 the Approve / Reject dialog.
 
+The employee's home page (**My dashboard**) also has **My calendar**: one month
+at a time, each day marked as a holiday, Sunday, approved or pending leave, or
+by attendance: worked (with the first-to-last span), short of the day, a missing
+punch or absent. It uses the payroll day rules: Mon-Sat, not a holiday, an
+8:30 h span lowered by approved leave, 10 minutes of grace. Pending leave
+doesn't excuse a day. Days before the person's first punch aren't marked absent.
+Clicking a day shows its punches, leave and holiday. It is built in the browser
+from `/api/attendance/my`, `/api/leave/my` and `/api/payroll/holidays`, with no
+endpoint of its own.
+
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | GET  | `/api/mbo/my` | signed in | own MBO threads with every entry; each has `weekStart` (that Monday, `yyyy-MM-dd`; `null` for an earlier MBO) and `status` open / acknowledged / denied / expired |
@@ -204,18 +215,60 @@ browser from the threads the tab already loads; there is no extra API.
 | POST | `/api/payroll/runs/{yyyy-MM}/{accountId}/correction` | director | `{hours, note}` ± missed hours, draft only; note required |
 | POST | `/api/payroll/runs/{yyyy-MM}/finalize`, `/paid` | director | draft → finalized (locked) → paid `{paidOn?}` |
 | GET  | `/api/payroll/my` | signed in | own finalized/paid payslips |
+| GET  | `/api/payroll/person/{accountId}` | director (every month), the person's manager, self (finalized/paid months) | one person's lines across months, newest first |
+
+Lines carry `overtimeDays` and `overtimePay`; each day of the breakdown carries
+`otMin` and `otDays`; a run carries `overtimeChanged` (a draft with overtime
+approved after it was generated, so it needs regenerating).
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET  | `/api/overtime/my` | signed in | `{claims, available}`: own claims, and own past days (last 62, month not locked) with overtime that nobody claimed |
+| POST | `/api/overtime` | signed in | `{day, reason?}` — a past day whose punches show a 10:00 h span or more; the server works out the overtime |
+| POST | `/api/overtime/{id}/cancel` | owner | while pending |
+| GET  | `/api/overtime/team` | director (all), manager (reportees) | `{claims, available}` to decide or approve directly |
+| GET  | `/api/overtime/person/{accountId}` | director, the person's manager, self | one person's claims |
+| POST | `/api/overtime/{id}/approve`, `/reject` | director, the person's manager (never own) | `{note}`: optional to approve, required to reject; approving re-reads the punches |
+| POST | `/api/overtime/grant` | director, the person's manager (never own) | `{accountId, day, note?}` — approve a day without a claim |
 
 **Payroll:** fixed monthly salary (basic + HRA + other allowance), cut only for
-hours missed. Day rate = gross ÷ days in that month (28–31); hour rate = day
-rate ÷ 8. Every Mon–Sat that isn't a holiday needs a 9 h first-to-last punch
-span (1 h lunch inside). Approved leave lowers it: full day → not counted,
-half-day → 4 h, late/early of X h → 9 − X h. Missed time per day is capped at
+hours missed, plus approved overtime. Day rate = gross ÷ days in that month
+(28–31); hour rate = day rate ÷ 8. Every Mon–Sat that isn't a holiday needs an
+8:30 h first-to-last punch span (lunch included). Approved leave lowers it:
+full day → not counted, half-day → 4 h, late/early of X h → 8:30 − X h. Missed time per day is capped at
 8 h (an absent day costs one day's pay); up to 10 minutes is forgiven, more is
 rounded up to the next half hour. Sundays and holidays are paid. While a month
 is running, only days up to yesterday count. Someone whose first salary row
 starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
-a finalized month can't change.
+a finalized month can't change. Net pay = gross − cut + overtime pay.
+
+**Overtime:** counted past the 9 h office day (first to last punch, 1 h lunch
+included, widened by an approved missed-punch fix), in whole hours rounded
+down, one quarter day per 2-hour band. 8:30 h is a full day with no cut; between
+8:30 and 10:00 nothing is cut or paid.
+
+| Span (in → out) | Whole hours past 9 h | Paid |
+|---|---|---|
+| under 10:00 | 0 | nothing |
+| 10:00 – 11:59 | 1–2 | ¼ day |
+| 12:00 – 13:59 | 3–4 | ½ day |
+| 14:00 – 15:59 | 5–6 | ¾ day |
+| 16:00 or more | 7+ | 1 day (the most for one day) |
+
+The same rule applies on any day, Sundays
+and holidays included. Only approved overtime is paid, at the day rate
+(overtime days × gross ÷ days in the month), in the month it was worked. An
+employee claims a past day from **Payslips → Overtime**, where days whose
+punches show overtime are listed; their reporting manager or a director
+approves or declines it (with a reason) in **Payroll → Overtime**. They can
+also approve a day found in the punches straight away, without a claim. Nobody
+decides their own, and a manager only sees their reportees. One open claim per
+person per day; once a month's payroll is finalized its overtime can't be
+claimed or decided. Approvals after a draft was generated show a "regenerate"
+note on the run. The run lines, day breakdown and payslip show the overtime
+days and amount, and clicking a person in Payroll opens their pay and overtime
+history (managers: reportees, finalized months only).
 
 **Who sets pay:** a director for anyone, or a manager for their own reportees
 (never for themselves). A salary saved by either applies at once and closes
@@ -289,7 +342,8 @@ can start first. If you change one, change the other repo too.
 | `leave_requests`, `leave_quotas`, `leave_person_quotas` | dashboard | dashboard |
 | `mbo_threads`, `mbo_entries` | dashboard | dashboard |
 | `punch_fixes` — approved missed-punch fixes (never written to `punches`) | dashboard | dashboard |
-| `payroll_salaries`, `payroll_recommendations`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`) | dashboard | dashboard |
+| `payroll_salaries`, `payroll_recommendations`, `payroll_holidays`, `payroll_runs`, `payroll_lines` (reads `punches`, `leave_requests`, `punch_fixes`, `overtime_claims`) | dashboard | dashboard |
+| `overtime_claims` — overtime claims and approvals (reads `punches`, `punch_fixes`) | dashboard | dashboard |
 
 ## Local dev with production data
 

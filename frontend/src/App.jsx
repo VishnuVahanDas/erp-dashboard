@@ -8,6 +8,7 @@ import { EmployeeMbo, OpsMbo, myTurn } from './mbo.jsx';
 import { EmployeePayslips, OpsPayroll } from './payroll.jsx';
 import { PersonDialog, TeamsView } from './team.jsx';
 import { MyPunchFixes, PunchFixQueue } from './punchfix.jsx';
+import { WorkCalendar } from './calendar.jsx';
 import { NotificationBell } from './notify.jsx';
 
 const TOKEN_KEY = 'attendance_token';
@@ -393,6 +394,8 @@ function EmployeeView({ me, ctx }) {
           </section>
         </div>
       </>)}
+
+      {tab === 'home' && <WorkCalendar me={me} days={days} linked={linked} />}
 
       {tab === 'log' && <MyPunchFixes me={me} onLoaded={setMyFixes} />}
 
