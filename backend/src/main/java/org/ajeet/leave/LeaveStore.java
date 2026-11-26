@@ -24,8 +24,8 @@ import java.util.Set;
  * Leave tracking: requests, approvals and yearly quotas.
  *
  * An employee applies for personal or sick leave over a date range, half of
- * a single day, or a few hours of one (late arrival / early departure, 0.5-4 h
- * in half-hour steps, counted as hours / 8 of a day). Sundays inside the
+ * a single day, or a few hours of one (late arrival / early departure, 0.5-3 h
+ * in half-hour steps, counted as hours / 8 of a day; 3.5 h or more is a half day). Sundays inside the
  * range don't count. Any of the
  * employee's reporting managers, or any director, may approve or reject; the
  * first decision wins. Nobody decides their own request.
@@ -47,7 +47,8 @@ public class LeaveStore {
     /** halfDay values: "" = full day(s); first/second = half-day; late/early = some hours. */
     public static final List<String> PARTS = List.of("", "first", "second", "late", "early");
     private static final double HOURS_PER_DAY = 8.0;
-    private static final double MAX_SHORT_HOURS = 4.0;
+    /** Late/early is at most 3 h; 3.5 h or more is taken as a half day instead. */
+    private static final double MAX_SHORT_HOURS = 3.0;
 
     private final Connection conn;
 
@@ -259,7 +260,7 @@ public class LeaveStore {
         if (isShort(half)) {
             hours = in.hours() == null ? 0 : in.hours();
             if (hours < 0.5 || hours > MAX_SHORT_HOURS || hours * 2 != Math.floor(hours * 2))
-                throw new IllegalArgumentException("hours must be 0.5 to 4 in half-hour steps");
+                throw new IllegalArgumentException("hours must be 0.5 to 3 in half-hour steps - for 3.5 h or more, apply for a half day");
         }
         String reason = in.reason() == null ? "" : in.reason().trim();
         if (reason.isEmpty()) throw new IllegalArgumentException("please give a reason");
