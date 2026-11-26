@@ -30,6 +30,13 @@ import java.util.Map;
  *   - suggest:     counter with changes            -> turn passes to the other side
  * Nobody answers their own side's proposal. Entries are never edited or
  * deleted - the trail is the point.
+ *
+ * MBOs are weekly (week_start = that Monday; a week belongs to the month its
+ * Monday is in, so a year is 12 months of 4-5 weekly MBOs). Each employee has
+ * at most one per manager per week, and only the current week can be started.
+ * A thread still open when its week is over is closed as expired (no entry is
+ * added or changed). Threads from before weekly MBOs have week_start null:
+ * they're "earlier MBOs" and never expire.
  */
 public class MboStore {
 
@@ -53,12 +60,13 @@ public class MboStore {
     public record Counterpart(long id, String name, String email, String relation) {}
 
     /**
-     * A thread as the portal shows it. status: open | acknowledged | denied.
+     * A thread as the portal shows it. status: open | acknowledged | denied | expired.
      * waitingOn is the side whose turn it is (null once closed). Times are epoch millis.
+     * weekStart is the Monday of its week (yyyy-MM-dd), null for an earlier MBO.
      */
     public record MboThread(long id, long employeeId, String employeeName, String employeeEmail,
                          Long managerId, String managerName, String title, String status, String waitingOn, String startedBy,
-                         long createdAt, long updatedAt, List<Entry> entries) {}
+                         long createdAt, long updatedAt, String weekStart, List<Entry> entries) {}
 
     public MboStore(String url, String user, String password) throws IOException {
         try {
@@ -90,6 +98,7 @@ public class MboStore {
                             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                         )""");
                 st.execute("CREATE INDEX IF NOT EXISTS mbo_entries_thread ON mbo_entries (thread_id, id)");
+                migrateWeekly(st);
             }
         } catch (SQLException e) {
             throw new IOException("MboStore init failed: " + e.getMessage(), e);
@@ -99,11 +108,13 @@ public class MboStore {
     // ----------------------------------------------------------------- reads
 
     public synchronized List<MboThread> forAccount(long accountId) throws IOException {
+        expireEnded();
         return threads("t.employee_id = ?", accountId);
     }
 
     /** Threads of everyone who reports to this manager (never the manager's own). */
     public synchronized List<MboThread> forTeam(long managerId) throws IOException {
+        expireEnded();
         return threads("""
                 t.employee_id <> ? AND t.employee_id IN
                     (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)""", managerId, managerId);
@@ -111,6 +122,7 @@ public class MboStore {
 
     /** Everyone's threads except the director's own (those live in their employee view). */
     public synchronized List<MboThread> allExcept(long accountId) throws IOException {
+        expireEnded();
         return threads("t.employee_id <> ?", accountId);
     }
 
@@ -142,9 +154,10 @@ public class MboStore {
     // ---------------------------------------------------------------- writes
 
     /**
-     * Start a thread. employeeId null or == who.id -> the employee raises it
+     * Start this week's thread. employeeId null or == who.id -> the employee raises it
      * themselves and must name managerId (one of {@link #counterparts});
      * otherwise who must be on that employee's manager side and is the manager.
+     * One per employee and manager per week (the unique index mbo_threads_week).
      */
     public synchronized long start(AuthStore.Account who, Long employeeId, Long managerId,
                                    String title, String body) throws IOException {
@@ -165,13 +178,15 @@ public class MboStore {
         if (t.isEmpty()) throw new IllegalArgumentException("please give it a title");
         if (t.length() > MAX_TITLE) throw new IllegalArgumentException("title is too long (max " + MAX_TITLE + " characters)");
         String b = body(body, true);
+        expireEnded();
 
         try {
             conn.setAutoCommit(false);
             long id;
+            // week_start: the Monday of the database's current week (Postgres weeks start on Monday)
             try (PreparedStatement ps = conn.prepareStatement("""
-                    INSERT INTO mbo_threads (employee_id, manager_id, title, waiting_on, started_by)
-                    VALUES (?, ?, ?, ?, ?) RETURNING id""")) {
+                    INSERT INTO mbo_threads (employee_id, manager_id, title, waiting_on, started_by, week_start)
+                    VALUES (?, ?, ?, ?, ?, date_trunc('week', current_date)::date) RETURNING id""")) {
                 ps.setLong(1, emp);
                 ps.setLong(2, mgr);
                 ps.setString(3, t);
@@ -187,6 +202,7 @@ public class MboStore {
             return id;
         } catch (SQLException e) {
             rollback();
+            if ("23505".equals(e.getSQLState())) throw alreadyThisWeek(emp == who.id() ? mgr : emp, side);
             throw new IOException("MBO start failed: " + e.getMessage(), e);
         } finally {
             autoCommit();
@@ -195,6 +211,7 @@ public class MboStore {
 
     /** action: acknowledge | deny | suggest. Only the side whose turn it is may answer. */
     public synchronized void respond(AuthStore.Account who, long threadId, String action, String body) throws IOException {
+        expireEnded();
         MboThread t = require(threadId);
         String side;
         if (t.employeeId() == who.id()) side = EMPLOYEE;
@@ -202,6 +219,7 @@ public class MboStore {
         else if (canManage(who, t.employeeId()))
             throw new ForbiddenException("this MBO is with " + t.managerName() + " - only they or a director can respond");
         else throw new ForbiddenException("you're not part of this MBO");
+        if (t.status().equals("expired")) throw new IllegalArgumentException("this week is over - the MBO expired");
         if (!t.status().equals("open")) throw new IllegalArgumentException("this MBO is already " + t.status());
         if (!side.equals(t.waitingOn()))
             throw new IllegalArgumentException("waiting for the " + t.waitingOn() + " to respond - you can't answer your own side's proposal");
@@ -238,6 +256,55 @@ public class MboStore {
     }
 
     // --------------------------------------------------------------- helpers
+
+    /** Adds week_start, its one-per-week index and the 'expired' status to an existing table; safe to re-run. */
+    private static void migrateWeekly(Statement st) throws SQLException {
+        st.execute("ALTER TABLE mbo_threads ADD COLUMN IF NOT EXISTS week_start DATE");
+        st.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS mbo_threads_week
+                ON mbo_threads (employee_id, manager_id, week_start) WHERE week_start IS NOT NULL""");
+        try (ResultSet rs = st.executeQuery("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conrelid = 'mbo_threads'::regclass AND conname = 'mbo_threads_status_check'""")) {
+            boolean current = rs.next() && rs.getString(1).contains("expired");
+            rs.close();
+            if (!current) {
+                st.execute("ALTER TABLE mbo_threads DROP CONSTRAINT IF EXISTS mbo_threads_status_check");
+                st.execute("""
+                        ALTER TABLE mbo_threads ADD CONSTRAINT mbo_threads_status_check
+                        CHECK (status IN ('open','acknowledged','denied','expired'))""");
+            }
+        }
+    }
+
+    /** Closes weekly threads still open after their week (Mon-Sun) is over. Earlier MBOs never expire. */
+    private void expireEnded() throws IOException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("""
+                    UPDATE mbo_threads SET status = 'expired', waiting_on = NULL, updated_at = now()
+                    WHERE status = 'open' AND week_start IS NOT NULL AND week_start + 7 <= current_date""");
+        } catch (SQLException e) {
+            throw new IOException("MBO expiry failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** "already this week's MBO" naming the other person, and when the next one can be started. */
+    private IllegalArgumentException alreadyThisWeek(long otherId, String side) throws IOException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT (SELECT COALESCE(NULLIF(full_name,''), email) FROM accounts WHERE id = ?),
+                       to_char(date_trunc('week', current_date)::date + 7, 'Dy DD Mon')""")) {
+            ps.setLong(1, otherId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                String name = rs.getString(1) != null ? rs.getString(1)
+                        : side.equals(EMPLOYEE) ? "that manager" : "that person";
+                return new IllegalArgumentException("there's already this week's MBO with " + name
+                        + " - the next one can be started on " + rs.getString(2));
+            }
+        } catch (SQLException e) {
+            throw new IOException("MBO lookup failed: " + e.getMessage(), e);
+        }
+    }
 
     private void addEntry(long threadId, long authorId, String side, String kind, String body) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
@@ -286,7 +353,7 @@ public class MboStore {
                 SELECT t.id, t.employee_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
                        t.manager_id, COALESCE(NULLIF(m.full_name,''), m.email), t.title, t.status, t.waiting_on, t.started_by,
                        (EXTRACT(EPOCH FROM t.created_at) * 1000)::bigint,
-                       (EXTRACT(EPOCH FROM t.updated_at) * 1000)::bigint
+                       (EXTRACT(EPOCH FROM t.updated_at) * 1000)::bigint, t.week_start::text
                 FROM mbo_threads t
                 JOIN accounts a ON a.id = t.employee_id
                 LEFT JOIN accounts m ON m.id = t.manager_id
@@ -299,7 +366,7 @@ public class MboStore {
                         out.put(rs.getLong(1), new MboThread(rs.getLong(1), rs.getLong(2), rs.getString(3),
                                 rs.getString(4), (Long) rs.getObject(5), rs.getString(6), rs.getString(7),
                                 rs.getString(8), rs.getString(9), rs.getString(10), rs.getLong(11),
-                                rs.getLong(12), new ArrayList<>()));
+                                rs.getLong(12), rs.getString(13), new ArrayList<>()));
                     }
                 }
             }

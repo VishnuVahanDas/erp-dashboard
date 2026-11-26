@@ -24,7 +24,7 @@ backend/   Java 24, Maven wrapper, no framework
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
     sync/SyncRequests.java       "Sync device" queue + agent heartbeat
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
-    mbo/MboStore.java            MBO threads and entries
+    mbo/MboStore.java            weekly MBO threads (grouped by month, expire when the week ends) and entries
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
     config/Env.java              env var / .env lookup
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
