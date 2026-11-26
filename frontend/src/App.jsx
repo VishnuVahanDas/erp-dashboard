@@ -322,11 +322,11 @@ function EmployeeView({ me, ctx }) {
              { key: 'home', label: 'My dashboard', icon: 'radar' },
              { key: 'log', label: 'Punch history', icon: 'log' },
              { key: 'leave', label: 'Leave', icon: 'calendar' },
-             { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
+             { key: 'mbo', label: 'Objectives', icon: 'chat', count: mboWaiting },
              { key: 'payslips', label: 'Payslips', icon: 'money' },
            ]}
-           subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Objectives & discussions', payslips: 'Payroll' }[tab] || 'Personal history'}
-           title={{ home: name, leave: 'My leave', mbo: 'My MBOs', payslips: 'My payslips' }[tab] || 'My punch history'}>
+           subtitle={{ home: greeting(), leave: 'Leave tracking', mbo: 'Weekly objectives & conversations', payslips: 'Payroll' }[tab] || 'Personal history'}
+           title={{ home: name, leave: 'My leave', mbo: 'My objectives', payslips: 'My payslips' }[tab] || 'My punch history'}>
       <Toasts error={error} onClose={() => setError(null)} />
 
       {tab === 'home' && <LeaveBalance me={me} />}
@@ -790,7 +790,7 @@ function OpsView({ me, ctx, scope }) {
     all: [isDirector ? 'Punch history' : 'Team punches', isDirector ? 'All punches' : 'Your reportees'],
     people: [peopleLabel, isDirector ? 'Roles & reporting' : 'People who report to you'],
     leave: ['Leave requests', isDirector ? 'Everyone · LTS' : 'Your team · LTS'],
-    mbo: ['MBOs', isDirector ? 'Everyone · objectives & discussions' : 'Your team · objectives & discussions'],
+    mbo: ['Objectives', isDirector ? 'Everyone · weekly objectives & conversations' : 'Your team · weekly objectives & conversations'],
     payroll: ['Payroll', isDirector ? 'Salaries, holidays & monthly runs' : 'Your team · finalized months'],
   };
   const mboWaiting = mbos.filter((t) => myTurn(t, me)).length;
@@ -804,7 +804,7 @@ function OpsView({ me, ctx, scope }) {
              { key: 'all', label: isDirector ? 'Punch history' : 'Team punches', icon: 'log' },
              { key: 'people', label: peopleLabel, icon: 'crew', count: isDirector ? 0 : headcount },
              { key: 'leave', label: 'Leave requests', icon: 'calendar', count: pendingLeave },
-             { key: 'mbo', label: 'MBOs', icon: 'chat', count: mboWaiting },
+             { key: 'mbo', label: 'Objectives', icon: 'chat', count: mboWaiting },
              { key: 'payroll', label: 'Payroll', icon: 'money' },
            ]}
            actions={isDirector ? <>

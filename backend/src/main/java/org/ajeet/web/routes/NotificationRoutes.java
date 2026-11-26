@@ -66,7 +66,7 @@ public class NotificationRoutes implements Routes {
         if (as.equals(AuthStore.EMPLOYEE)) {
             for (MboStore.MboThread t : mbo.forAccount(me))
                 if (t.status().equals("open") && "employee".equals(t.waitingOn()))
-                    out.add(item("mbo", t.id(), "MBO waiting on you", t.title(), "mbo", t.updatedAt()));
+                    out.add(item("mbo", t.id(), "Objective waiting on you", t.title(), "mbo", t.updatedAt()));
             for (LeaveStore.LeaveRequest r : leave.forAccount(me))
                 if (r.decidedAt() != null && r.decidedAt() > weekAgo && !r.status().equals("cancelled"))
                     out.add(item("leave-decided", r.id(), "Leave " + r.status(),
@@ -101,7 +101,7 @@ public class NotificationRoutes implements Routes {
             for (MboStore.MboThread t : director ? mbo.allExcept(me) : mbo.forTeam(me))
                 if (t.status().equals("open") && "manager".equals(t.waitingOn())
                         && (t.managerId() == null || t.managerId() == me))
-                    out.add(item("mbo", t.id(), "MBO waiting on you · " + t.employeeName(), t.title(), "mbo", t.updatedAt()));
+                    out.add(item("mbo", t.id(), "Objective waiting on you · " + t.employeeName(), t.title(), "mbo", t.updatedAt()));
         }
         // your own incomplete punches, in every role: a manager asks their own reporting manager,
         // so the item opens the employee Punch history where the fix is requested
