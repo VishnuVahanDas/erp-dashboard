@@ -198,7 +198,7 @@ approved after it was generated, so it needs regenerating).
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | GET  | `/api/overtime/my` | signed in | `{claims, available}`: own claims, and own past days (last 62, month not locked) with overtime that nobody claimed |
-| POST | `/api/overtime` | signed in | `{day, reason?}` — a past day whose punches show 30+ min past a 9:00 h span; the server works out the overtime |
+| POST | `/api/overtime` | signed in | `{day, reason?}` — a past day whose punches show a 10:00 h span or more; the server works out the overtime |
 | POST | `/api/overtime/{id}/cancel` | owner | while pending |
 | GET  | `/api/overtime/team` | director (all), manager (reportees) | `{claims, available}` to decide or approve directly |
 | GET  | `/api/overtime/person/{accountId}` | director, the person's manager, self | one person's claims |
@@ -217,13 +217,20 @@ starts mid-month is paid from that date. The director can add a ± hours
 correction with a note (forgotten punch, unlinked account) before finalizing;
 a finalized month can't change. Net pay = gross − cut + overtime pay.
 
-**Overtime:** counted from a 9:00 h span (first to last punch, lunch
-included, widened by an approved missed-punch fix). 8:30 h is a full day with
-no cut; the half hour up to 9:00 is neither cut nor paid. Time past 9:00 is
-paid in quarter days: under 30 min → nothing, 30 min–2 h → ¼ day, over 2–4 h →
-½ day, over 4–6 h → ¾ day, over 6 h → 1 day (the most for one day). As spans:
-under 9:30 → 0, 9:30–11:00 → ¼, over 11–13 h → ½, over 13–15 h → ¾, over 15 h
-→ 1. The same rule applies on any day, Sundays
+**Overtime:** counted past the 9 h office day (first to last punch, 1 h lunch
+included, widened by an approved missed-punch fix), in whole hours rounded
+down, one quarter day per 2-hour band. 8:30 h is a full day with no cut; between
+8:30 and 10:00 nothing is cut or paid.
+
+| Span (in → out) | Whole hours past 9 h | Paid |
+|---|---|---|
+| under 10:00 | 0 | nothing |
+| 10:00 – 11:59 | 1–2 | ¼ day |
+| 12:00 – 13:59 | 3–4 | ½ day |
+| 14:00 – 15:59 | 5–6 | ¾ day |
+| 16:00 or more | 7+ | 1 day (the most for one day) |
+
+The same rule applies on any day, Sundays
 and holidays included. Only approved overtime is paid, at the day rate
 (overtime days × gross ÷ days in the month), in the month it was worked. An
 employee claims a past day from **Payslips → Overtime**, where days whose

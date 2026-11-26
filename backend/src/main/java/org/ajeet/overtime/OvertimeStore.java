@@ -18,15 +18,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Overtime: time past a 9:00 h first-to-last punch span (lunch included),
- * paid in quarter days once approved. 8:30 h is a full day for payroll (no
- * cut); the half hour up to 9:00 is neither cut nor paid. Past 9:00:
+ * Overtime: counted past the 9 h office day (first-to-last punch span, 1 h
+ * lunch included), in whole hours rounded down, and paid in quarter days once
+ * approved, one band per 2 whole hours. 8:30 h is a full day for payroll (no
+ * cut); between 8:30 and 10:00 nothing is cut or paid.
  *
- *   under 30 min -> 0 · 30 min-2 h -> 0.25 · over 2-4 h -> 0.5 ·
- *   over 4-6 h -> 0.75 · over 6 h -> 1 day (the most for one day)
+ *   whole hours past 9 h: 0 -> 0 · 1-2 -> 0.25 · 3-4 -> 0.5 · 5-6 -> 0.75 ·
+ *   7 or more -> 1 day (the most for one day)
  *
- * As spans: under 9:30 -> 0 · 9:30-11:00 -> 0.25 · over 11-13 h -> 0.5 ·
- * over 13-15 h -> 0.75 · over 15 h -> 1.
+ * As spans: under 10:00 -> 0 · 10:00-11:59 -> 0.25 · 12:00-13:59 -> 0.5 ·
+ * 14:00-15:59 -> 0.75 · 16:00 or more -> 1.
  *
  * The span comes from device punches widened by an approved missed-punch fix,
  * the same way payroll reads a day. An employee claims a past day, or a
@@ -37,10 +38,10 @@ import java.util.List;
  */
 public class OvertimeStore {
 
-    /** Overtime is counted from a 9:00 h span (a full day for payroll is 8:30 h). */
+    /** Overtime is counted past a 9:00 h span (a full day for payroll is 8:30 h). */
     public static final int OT_START_MIN = 9 * 60;
-    /** Less than this past 9:00 h isn't overtime. */
-    public static final int MIN_OT_MIN = 30;
+    /** Less than one whole hour past 9:00 h isn't overtime. */
+    public static final int MIN_OT_MIN = 60;
     /** How far back "overtime you can claim" looks. */
     public static final int LOOKBACK_DAYS = 62;
     private static final int MAX_NOTE = 500;
@@ -104,12 +105,13 @@ public class OvertimeStore {
 
     // ------------------------------------------------------------- the rule
 
-    /** Days paid for this much time past a full day. */
+    /** Days paid for this many minutes past 9:00 h: whole hours, rounded down, in 2-hour bands. */
     public static double otDays(int otMin) {
-        if (otMin < MIN_OT_MIN) return 0;
-        if (otMin <= 2 * 60) return 0.25;
-        if (otMin <= 4 * 60) return 0.5;
-        if (otMin <= 6 * 60) return 0.75;
+        int hours = Math.max(0, otMin) / 60;
+        if (hours < 1) return 0;
+        if (hours <= 2) return 0.25;
+        if (hours <= 4) return 0.5;
+        if (hours <= 6) return 0.75;
         return 1;
     }
 
@@ -268,14 +270,14 @@ public class OvertimeStore {
         }
     }
 
-    /** The day's span, or an error when it isn't at least 30 minutes past a full day. */
+    /** The day's span, or an error when it isn't at least a whole hour past 9:00 h. */
     private Span requireOvertime(long accountId, LocalDate d) throws IOException {
         Span s = span(accountId, d);
         if (s == null) throw new IllegalArgumentException("no punches on " + d);
         int ot = s.minutes() - OT_START_MIN;
         if (otDays(ot) == 0)
             throw new IllegalArgumentException("the punches on " + d + " show " + hm(s.minutes())
-                    + " - overtime counts from 9:00 h, and needs at least 30 minutes past it (9:30 h)");
+                    + " - overtime is paid from a 10:00 h span (a whole hour past the 9 h day)");
         return s;
     }
 

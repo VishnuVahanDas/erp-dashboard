@@ -9,9 +9,9 @@ import { Avatar, Empty, Icon, Modal, Toasts, call, fmtDuration } from './ui.jsx'
 
 const PILL = { pending: 'warn', approved: 'live', rejected: 'bad', cancelled: 'idle' };
 const STATUS = { pending: 'pending', approved: 'approved', rejected: 'declined', cancelled: 'withdrawn' };
-export const OT_RULE = 'Overtime counts from a 9:00 h span (first to last punch, lunch included; 8:30 h is a full day). '
-  + 'Past 9:00: 30 min–2 h = ¼ day, over 2–4 h = ½ day, over 4–6 h = ¾ day, over 6 h = 1 day (the most for one day). '
-  + 'Under 30 minutes past 9:00 doesn’t count. Approved days are paid at the day rate.';
+export const OT_RULE = 'Overtime counts whole hours past the 9 h day (first to last punch, 1 h lunch included; 8:30 h is a full day). '
+  + 'Span 10:00–11:59 = ¼ day, 12:00–13:59 = ½ day, 14:00–15:59 = ¾ day, 16:00 or more = 1 day (the most for one day). '
+  + 'Under 10:00 there’s no overtime. Approved days are paid at the day rate.';
 
 const fmtDay = (s) => new Date(`${s}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtStamp = (ms) => (ms ? new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');

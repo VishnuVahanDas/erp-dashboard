@@ -34,8 +34,8 @@ import java.util.Map;
  * half-day: 4 h; late/early of X h: 8:30 - X h). Missed time per day is capped
  * at 8 h (an absent day costs one day's pay); up to 10 minutes is forgiven,
  * anything more is rounded up to the next half hour. Cut = hour rate *
- * (missed + director's correction). Approved overtime (quarter days past a
- * 9:00 h span, see OvertimeStore) adds day rate * overtime days:
+ * (missed + director's correction). Approved overtime (quarter days for whole
+ * hours past a 9:00 h span, see OvertimeStore) adds day rate * overtime days:
  * net = gross - cut + overtime.
  *
  * A run is per month: draft (regenerate / correct freely) -> finalized
