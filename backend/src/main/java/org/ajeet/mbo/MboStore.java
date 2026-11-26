@@ -31,17 +31,22 @@ import java.util.Map;
  * Nobody answers their own side's proposal. Entries are never edited or
  * deleted - the trail is the point.
  *
+ * The UI calls a thread an "objective" and its back-and-forth a "conversation";
+ * the API paths and tables keep the mbo name.
+ *
  * MBOs are weekly (week_start = that Monday; a week belongs to the month its
- * Monday is in, so a year is 12 months of 4-5 weekly MBOs). Each employee has
- * at most one per manager per week, and only the current week can be started.
- * A thread still open when its week is over is closed as expired (no entry is
- * added or changed). Threads from before weekly MBOs have week_start null:
- * they're "earlier MBOs" and never expire.
+ * Monday is in, so a year is 12 months of 4-5 weeks). Each employee has up to
+ * MAX_PER_WEEK per manager per week (two managers -> twice that), and only the
+ * current week can be started. A thread still open when its week is over is
+ * closed as expired (no entry is added or changed). Threads from before weekly
+ * MBOs have week_start null: they're "earlier objectives" and never expire.
  */
 public class MboStore {
 
     public static final String EMPLOYEE = "employee";
     public static final String MANAGER = "manager";
+    /** Objectives per employee per manager per week, whatever their status. */
+    public static final int MAX_PER_WEEK = 6;
     private static final int MAX_TITLE = 200;
     private static final int MAX_BODY = 4000;
 
@@ -157,7 +162,8 @@ public class MboStore {
      * Start this week's thread. employeeId null or == who.id -> the employee raises it
      * themselves and must name managerId (one of {@link #counterparts});
      * otherwise who must be on that employee's manager side and is the manager.
-     * One per employee and manager per week (the unique index mbo_threads_week).
+     * Up to MAX_PER_WEEK per employee and manager per week (expired ones count too).
+     * The method is synchronized on the one connection, so the count can't race.
      */
     public synchronized long start(AuthStore.Account who, Long employeeId, Long managerId,
                                    String title, String body) throws IOException {
@@ -166,19 +172,20 @@ public class MboStore {
         long mgr;
         if (side.equals(MANAGER)) {
             if (!canManage(who, emp))
-                throw new ForbiddenException("only their reporting manager or a director can start an MBO for this person");
+                throw new ForbiddenException("only their reporting manager or a director can start an objective for this person");
             mgr = who.id();
         } else {
             if (managerId == null || managerId == 0) throw new IllegalArgumentException("pick the manager to send it to");
             mgr = managerId;
             if (counterparts(who.id()).stream().noneMatch(c -> c.id() == mgr))
-                throw new IllegalArgumentException("you can only send an MBO to one of your reporting managers or a director");
+                throw new IllegalArgumentException("you can only send an objective to one of your reporting managers or a director");
         }
         String t = clean(title);
         if (t.isEmpty()) throw new IllegalArgumentException("please give it a title");
         if (t.length() > MAX_TITLE) throw new IllegalArgumentException("title is too long (max " + MAX_TITLE + " characters)");
         String b = body(body, true);
         expireEnded();
+        requireRoomThisWeek(emp, mgr, side);
 
         try {
             conn.setAutoCommit(false);
@@ -202,7 +209,6 @@ public class MboStore {
             return id;
         } catch (SQLException e) {
             rollback();
-            if ("23505".equals(e.getSQLState())) throw alreadyThisWeek(emp == who.id() ? mgr : emp, side);
             throw new IOException("MBO start failed: " + e.getMessage(), e);
         } finally {
             autoCommit();
@@ -217,10 +223,10 @@ public class MboStore {
         if (t.employeeId() == who.id()) side = EMPLOYEE;
         else if (answersFor(who, t)) side = MANAGER;
         else if (canManage(who, t.employeeId()))
-            throw new ForbiddenException("this MBO is with " + t.managerName() + " - only they or a director can respond");
-        else throw new ForbiddenException("you're not part of this MBO");
-        if (t.status().equals("expired")) throw new IllegalArgumentException("this week is over - the MBO expired");
-        if (!t.status().equals("open")) throw new IllegalArgumentException("this MBO is already " + t.status());
+            throw new ForbiddenException("this objective is with " + t.managerName() + " - only they or a director can respond");
+        else throw new ForbiddenException("you're not part of this conversation");
+        if (t.status().equals("expired")) throw new IllegalArgumentException("this week is over - the objective expired");
+        if (!t.status().equals("open")) throw new IllegalArgumentException("this objective is already " + t.status());
         if (!side.equals(t.waitingOn()))
             throw new IllegalArgumentException("waiting for the " + t.waitingOn() + " to respond - you can't answer your own side's proposal");
 
@@ -257,11 +263,13 @@ public class MboStore {
 
     // --------------------------------------------------------------- helpers
 
-    /** Adds week_start, its one-per-week index and the 'expired' status to an existing table; safe to re-run. */
+    /** Adds week_start, its lookup index and the 'expired' status to an existing table; safe to re-run. */
     private static void migrateWeekly(Statement st) throws SQLException {
         st.execute("ALTER TABLE mbo_threads ADD COLUMN IF NOT EXISTS week_start DATE");
+        // one-per-week unique index from the first weekly version; the limit is now MAX_PER_WEEK, counted in start()
+        st.execute("DROP INDEX IF EXISTS mbo_threads_week");
         st.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS mbo_threads_week
+                CREATE INDEX IF NOT EXISTS mbo_threads_week_pair
                 ON mbo_threads (employee_id, manager_id, week_start) WHERE week_start IS NOT NULL""");
         try (ResultSet rs = st.executeQuery("""
                 SELECT pg_get_constraintdef(oid) FROM pg_constraint
@@ -288,18 +296,26 @@ public class MboStore {
         }
     }
 
-    /** "already this week's MBO" naming the other person, and when the next one can be started. */
-    private IllegalArgumentException alreadyThisWeek(long otherId, String side) throws IOException {
+    /**
+     * Refuses a new thread once this employee and manager already have MAX_PER_WEEK this week,
+     * naming the other person and the Monday the next one can be started.
+     */
+    private void requireRoomThisWeek(long emp, long mgr, String side) throws IOException {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT (SELECT COALESCE(NULLIF(full_name,''), email) FROM accounts WHERE id = ?),
+                SELECT (SELECT count(*) FROM mbo_threads
+                        WHERE employee_id = ? AND manager_id = ? AND week_start = date_trunc('week', current_date)::date),
+                       (SELECT COALESCE(NULLIF(full_name,''), email) FROM accounts WHERE id = ?),
                        to_char(date_trunc('week', current_date)::date + 7, 'Dy DD Mon')""")) {
-            ps.setLong(1, otherId);
+            ps.setLong(1, emp);
+            ps.setLong(2, mgr);
+            ps.setLong(3, side.equals(EMPLOYEE) ? mgr : emp);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                String name = rs.getString(1) != null ? rs.getString(1)
+                if (rs.getInt(1) < MAX_PER_WEEK) return;
+                String name = rs.getString(2) != null ? rs.getString(2)
                         : side.equals(EMPLOYEE) ? "that manager" : "that person";
-                return new IllegalArgumentException("there's already this week's MBO with " + name
-                        + " - the next one can be started on " + rs.getString(2));
+                throw new IllegalArgumentException("there are already " + MAX_PER_WEEK + " objectives this week with "
+                        + name + " - the next one can be started on " + rs.getString(3));
             }
         } catch (SQLException e) {
             throw new IOException("MBO lookup failed: " + e.getMessage(), e);
@@ -343,7 +359,7 @@ public class MboStore {
 
     private MboThread require(long id) throws IOException {
         List<MboThread> list = threads("t.id = ?", id);
-        if (list.isEmpty()) throw new IllegalArgumentException("MBO not found");
+        if (list.isEmpty()) throw new IllegalArgumentException("objective not found");
         return list.get(0);
     }
 

@@ -24,7 +24,7 @@ web-dashboard/
 │       ├── attendance/PunchFixStore.java   missed-punch requests and approved fixes
 │       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
 │       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
-│       ├── mbo/MboStore.java               weekly MBO discussions: propose / acknowledge / deny / suggest, expiry
+│       ├── mbo/MboStore.java               weekly MBOs ("Objectives" in the UI, 6 per manager per week): propose / acknowledge / deny / suggest, expiry
 │       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
 │       └── config/Env.java                 env / .env lookup
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
@@ -155,10 +155,13 @@ the Approve / Reject dialog.
 | GET  | `/api/mbo/team` | manager | reportees' threads |
 | GET  | `/api/mbo/all` | director | everyone's threads except your own |
 | GET  | `/api/mbo/managers` | signed in | who you can send an MBO to: your reporting managers + directors |
-| POST | `/api/mbo` | signed in | manager: `{employeeId, title, body}`; employee: `{managerId, title, body}`. Always for the current week; 400 if that employee already has this week's MBO with that manager |
+| POST | `/api/mbo` | signed in | manager: `{employeeId, title, body}`; employee: `{managerId, title, body}`. Always for the current week; 400 once that employee already has 6 this week with that manager |
 | POST | `/api/mbo/{id}/acknowledge`, `/deny`, `/suggest` | the side whose turn it is (employee, or the named manager / a director) | `{body}`; required for deny/suggest |
 
-**MBOs:** a thread is between one employee and one named manager. A manager
+**MBOs (shown as Objectives):** the UI calls an MBO an **objective** and its
+back-and-forth a **conversation** (sidebar tab *Objectives*); the API paths
+(`/api/mbo/...`) and tables (`mbo_threads`, `mbo_entries`) keep the MBO name.
+A thread is between one employee and one named manager. A manager
 starting it is that manager; an employee picks one of their reporting managers
 or a director. The manager side is answered by that manager or any director
 (other reporting managers can read it). Whoever starts it proposes; the other side then
@@ -166,17 +169,18 @@ acknowledges (closed, agreed), denies (closed, not agreed) or suggests changes
 (turn flips back). Entries are never edited or deleted, so the trail can back
 promotion reviews.
 
-**Weekly MBOs:** MBOs are weekly and grouped by month: a year is 12 months of
-4–5 weekly MBOs. A week runs Monday–Sunday and belongs to the month its Monday
-is in (Mon 30 Nov – Sun 6 Dec is November · Week 5). Each employee has at most
-one MBO per manager per week (someone with two reporting managers has two), and
-only the current week's can be started; once the week is over the next one can
-be. An MBO still open when its week ends is closed as **expired**: nobody can
-answer it any more, its entries stay as they were, and it counts as not agreed.
-"Today" is the database's date. MBOs from before weekly MBOs have no week, stay
-as they were (they don't expire) and are listed under **Earlier MBOs**.
+**Weekly objectives:** objectives are weekly and grouped by month: a year is 12
+months of 4–5 weeks. A week runs Monday–Sunday and belongs to the month its
+Monday is in (Mon 30 Nov – Sun 6 Dec is November · Week 5). Each employee can
+have up to **6 per manager per week**, whatever their status (someone with two
+reporting managers can have 12); only the current week's can be started, and
+the 7th is refused until next Monday. An objective still open when its week
+ends is closed as **expired**: nobody can answer it any more, its entries stay
+as they were, and it counts as not agreed. "Today" is the database's date.
+MBOs from before weekly objectives have no week, stay as they were (they don't
+expire) and are listed under **Earlier objectives**.
 
-Managers and directors also get a **Performance** panel on the MBO tab: per
+Managers and directors also get a **Performance** panel on the Objectives tab: per
 employee, over a chosen period, the objectives agreed, agreement rate (agreed ÷
 agreed + denied + expired), MBOs they
 raised themselves, average reply time and anything waiting on them, plus "Most

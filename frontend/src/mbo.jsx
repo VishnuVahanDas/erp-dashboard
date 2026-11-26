@@ -1,8 +1,8 @@
 /*
- * MBOs — employee <-> manager discussions: propose, then acknowledge / deny / suggest changes.
- * Weekly: one per employee and manager per week, only the current week can be started, and one
+ * Objectives (MBOs in the code and API) — employee <-> manager conversations: propose, then
+ * acknowledge / deny / suggest changes. Weekly: up to MAX_PER_WEEK per employee and manager per week, only the current week can be started, and one
  * still open when its week ends is closed as expired. Weeks run Mon–Sun and belong to the month
- * their Monday is in, so a year is 12 months of 4–5 weekly MBOs. Older MBOs have no week.
+ * their Monday is in, so a year is 12 months of 4–5 weeks. Older ones have no week.
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
@@ -45,6 +45,15 @@ const weekOf = (weekStart) => {
   };
 };
 const weekLabel = (w) => `${w.monthShort} · Week ${w.weekNo} (${w.range})`;
+
+/** Objectives per employee per manager per week (mirrors MboStore.MAX_PER_WEEK; the server decides). */
+const MAX_PER_WEEK = 6;
+/** How many of the threads in the week starting monday match, counted per key(t). */
+const weekCounts = (threads, monday, match, key) => {
+  const m = new Map();
+  for (const t of threads) if (t.weekStart === monday && match(t)) m.set(key(t), (m.get(key(t)) || 0) + 1);
+  return m;
+};
 const KIND = {
   proposal: 'Proposed',
   suggest: 'Suggested changes',
@@ -89,7 +98,7 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
   const week = weekOf(t.weekStart);
 
   const act = async (action) => {
-    if (action === 'deny' && !window.confirm('Deny this MBO? This closes the discussion.')) return;
+    if (action === 'deny' && !window.confirm('Deny this objective? This closes the conversation.')) return;
     setBusy(action); setError(null);
     try {
       await call('POST', `/api/mbo/${t.id}/${action}`, { body }, me.token);
@@ -99,10 +108,10 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
   };
 
   return (
-    <Modal title={t.title} eyebrow={`MBO · ${t.employeeName}`} onClose={onClose}>
+    <Modal title={t.title} eyebrow={`Conversation · ${t.employeeName}`} onClose={onClose}>
       <div className="mbo-meta">
         <StatusPill t={t} me={me} />
-        <span className="muted">{week ? `${weekLabel(week)} · ` : 'Earlier MBO · '}{t.employeeName} ↔ {managerLabel(t)} · started {fmtStamp(t.createdAt)} by the {t.startedBy} · {rounds(t)} round(s)</span>
+        <span className="muted">{week ? `${weekLabel(week)} · ` : 'Earlier objective · '}{t.employeeName} ↔ {managerLabel(t)} · started {fmtStamp(t.createdAt)} by the {t.startedBy} · {rounds(t)} round(s)</span>
       </div>
 
       <ol className="mbo-chat">
@@ -157,16 +166,16 @@ function ThreadDialog({ me, thread: t, onClose, onDone }) {
 /* ---------------------------------------------------------------- start */
 
 /**
- * Start this week's MBO. threads are the ones already loaded; whoever already has this week's MBO
- * with you is shown but can't be picked (the server refuses it too).
+ * A new objective for this week. threads are the ones already loaded; whoever already has
+ * MAX_PER_WEEK this week with you is shown but can't be picked (the server refuses it too).
  */
 function NewMboDialog({ me, people, threads, onClose, onSaved }) {
   const monday = thisMonday();
   const week = weekOf(monday);
-  // employee view: managers already used this week; manager view: people already done with me this week
-  const taken = useMemo(() => new Set(threads.filter((t) => t.weekStart === monday)
-    .filter((t) => (people ? t.managerId === me.id : t.employeeId === me.id))
-    .map((t) => (people ? t.employeeId : t.managerId))), [threads, monday, people, me.id]);
+  // employee view: this week's count per manager; manager view: per person, with me as the manager
+  const used = useMemo(() => weekCounts(threads, monday, (t) => (people ? t.managerId === me.id : t.employeeId === me.id),
+    (t) => (people ? t.employeeId : t.managerId)), [threads, monday, people, me.id]);
+  const full = (id) => (used.get(id) || 0) >= MAX_PER_WEEK;
   const [employeeId, setEmployeeId] = useState('');
   const [managerId, setManagerId] = useState('');
   const [managers, setManagers] = useState(null); // employee only: who they can send to
@@ -174,13 +183,16 @@ function NewMboDialog({ me, people, threads, onClose, onSaved }) {
     if (people) return;
     call('GET', '/api/mbo/managers', null, me.token).then((d) => {
       setManagers(d.managers || []);
-      const own = (d.managers || []).filter((m) => m.relation === 'manager' && !taken.has(m.id));
+      const own = (d.managers || []).filter((m) => m.relation === 'manager' && (used.get(m.id) || 0) < MAX_PER_WEEK);
       if (own.length === 1) setManagerId(String(own[0].id)); // the usual case: one manager
     }).catch((e) => { setManagers([]); setError(e.message); });
-  }, [people, me.token, taken]);
+  }, [people, me.token, used]);
   const options = people || managers || [];
-  const allDone = options.length > 0 && options.every((o) => taken.has(o.id));
-  const doneTag = (id) => (taken.has(id) ? ' — done this week' : '');
+  const allDone = options.length > 0 && options.every((o) => full(o.id));
+  const countTag = (id) => {
+    const n = used.get(id) || 0;
+    return n >= MAX_PER_WEEK ? ` — ${n} of ${MAX_PER_WEEK}, full this week` : n ? ` — ${n} of ${MAX_PER_WEEK} this week` : '';
+  };
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [error, setError] = useState(null);
@@ -195,27 +207,27 @@ function NewMboDialog({ me, people, threads, onClose, onSaved }) {
         managerId: people ? null : Number(managerId), title, body,
       }, me.token);
       const to = managers?.find((m) => String(m.id) === managerId);
-      onSaved(people ? 'MBO sent — waiting on the employee' : `MBO sent to ${to?.name || 'your manager'}`);
+      onSaved(people ? 'Objective sent — waiting on the employee' : `Objective sent to ${to?.name || 'your manager'}`);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
 
   return (
-    <Modal title="This week's MBO" eyebrow={weekLabel(week)} onClose={onClose}>
+    <Modal title="New objective" eyebrow={weekLabel(week)} onClose={onClose}>
       <form className="person-form" onSubmit={submit}>
         <div className="leave-sum"><Icon name="calendar" /><span>
-          For <b>{week.monthShort} · Week {week.weekNo}</b> ({week.range}). One MBO per {people ? 'person' : 'manager'} each
-          week; if it isn't agreed by {week.sunday} it closes as expired.
+          For <b>{week.monthShort} · Week {week.weekNo}</b> ({week.range}). Up to {MAX_PER_WEEK} objectives
+          {people ? ' with each person' : ' with each manager'} per week; one that isn't agreed by {week.sunday} closes as expired.
         </span></div>
         {allDone && (
-          <div className="inline err">You've started this week's MBO with everyone — the next one can be started on {week.nextMonday}.</div>
+          <div className="inline err">This week's {MAX_PER_WEEK} objectives are used up with everyone — the next one can be started on {week.nextMonday}.</div>
         )}
         {people && (
           <label className="field">
             <span>With</span>
             <select value={employeeId} required onChange={(e) => setEmployeeId(e.target.value)}>
               <option value="" disabled>Pick a person…</option>
-              {people.map((p) => <option key={p.id} value={p.id} disabled={taken.has(p.id)}>{p.name || p.email}{doneTag(p.id)}</option>)}
+              {people.map((p) => <option key={p.id} value={p.id} disabled={full(p.id)}>{p.name || p.email}{countTag(p.id)}</option>)}
             </select>
           </label>
         )}
@@ -231,7 +243,7 @@ function NewMboDialog({ me, people, threads, onClose, onSaved }) {
                   const list = (managers || []).filter((m) => m.relation === rel);
                   return list.length > 0 && (
                     <optgroup key={rel} label={label}>
-                      {list.map((m) => <option key={m.id} value={m.id} disabled={taken.has(m.id)}>{m.name}{doneTag(m.id)}</option>)}
+                      {list.map((m) => <option key={m.id} value={m.id} disabled={full(m.id)}>{m.name}{countTag(m.id)}</option>)}
                     </optgroup>
                   );
                 })}
@@ -267,13 +279,13 @@ function NewMboDialog({ me, people, threads, onClose, onSaved }) {
 
 /* ----------------------------------------------------------------- list */
 
-/** Months newest first (each month's weeks newest first), then the earlier MBOs that have no week. */
+/** Months newest first (each month's weeks newest first), then the earlier objectives that have no week. */
 function byMonth(threads) {
   const groups = new Map();
   for (const t of threads) {
     const w = weekOf(t.weekStart);
     const key = w ? w.monthKey : 'earlier';
-    if (!groups.has(key)) groups.set(key, { key, label: w ? w.monthLabel : 'Earlier MBOs', threads: [] });
+    if (!groups.has(key)) groups.set(key, { key, label: w ? w.monthLabel : 'Earlier objectives', threads: [] });
     groups.get(key).threads.push(t);
   }
   return [...groups.values()]
@@ -285,7 +297,7 @@ function byMonth(threads) {
 }
 
 function ThreadTable({ me, threads, showName, onOpen, empty }) {
-  if (!threads.length) return <Empty title={empty} hint="Start this week's MBO to open a discussion." />;
+  if (!threads.length) return <Empty title={empty} hint="Add an objective for this week to start a conversation." />;
   const cols = showName ? 8 : 7;
   return (
     <div className="table-wrap">
@@ -308,8 +320,8 @@ function ThreadTable({ me, threads, showName, onOpen, empty }) {
               <tr className="month-row">
                 <td colSpan={cols}>
                   <b>{g.label}</b>
-                  <span>{g.key === 'earlier' ? 'from before weekly MBOs'
-                    : `${g.threads.filter((t) => t.status === 'acknowledged').length} of ${g.threads.length} weekly MBO(s) agreed`}</span>
+                  <span>{g.key === 'earlier' ? 'from before weekly objectives'
+                    : `${g.threads.filter((t) => t.status === 'acknowledged').length} of ${g.threads.length} objective(s) agreed`}</span>
                 </td>
               </tr>
               {g.threads.map((t) => <ThreadRow key={t.id} me={me} t={t} showName={showName} onOpen={onOpen} />)}
@@ -359,13 +371,16 @@ function useDialogs(threads, reload) {
 
 /* ------------------------------------------------------------- employee */
 
-/** Employee "MBOs" tab: own discussions with the manager side. */
+/** Employee "Objectives" tab: own conversations with the manager side. */
 export function EmployeeMbo({ me, threads, reload }) {
   const d = useDialogs(threads, reload);
   const waiting = threads.filter((t) => myTurn(t, me));
   const count = (s) => threads.filter((t) => t.status === s).length;
   const week = weekOf(thisMonday());
   const thisWeek = threads.filter((t) => t.weekStart === thisMonday());
+  // "Asha 2/6 · Ravi 1/6": this week's objectives per manager, out of the weekly limit
+  const perManager = [...weekCounts(threads, thisMonday(), () => true, (t) => first(managerLabel(t)))]
+    .map(([name, n]) => `${name} ${n}/${MAX_PER_WEEK}`).join(' · ');
 
   return (<>
     <Toasts notice={d.notice} error={d.error} onClose={() => d.setError(null)} />
@@ -374,7 +389,7 @@ export function EmployeeMbo({ me, threads, reload }) {
             foot={waiting.length ? 'your manager asked for a response' : `nothing to answer · ${count('open') - waiting.length} with your manager`} />
       <Stat label={`This week · Week ${week.weekNo}`} value={thisWeek.length} icon="calendar"
             accent={thisWeek.length ? '' : 'saffron'}
-            foot={thisWeek.length ? `with ${thisWeek.map((t) => first(managerLabel(t))).join(', ')}` : `not started yet · ${week.range}`} />
+            foot={thisWeek.length ? perManager : `not started yet · ${week.range}`} />
       <Stat label="Acknowledged" value={count('acknowledged')} accent="cyan" icon="approve" foot="agreed objectives" />
       <Stat label="Denied" value={count('denied')} icon="log"
             foot={count('expired') ? `+${count('expired')} expired (week ended)` : 'closed without agreement'} />
@@ -382,10 +397,10 @@ export function EmployeeMbo({ me, threads, reload }) {
 
     <section className="panel">
       <div className="panel-head">
-        <h3>My MBOs</h3>
-        <button className="btn primary" onClick={() => d.setStarting(true)}><Icon name="plus" />Start this week's MBO</button>
+        <h3>My objectives</h3>
+        <button className="btn primary" onClick={() => d.setStarting(true)}><Icon name="plus" />New objective</button>
       </div>
-      <ThreadTable me={me} threads={threads} onOpen={d.setOpenId} empty="No MBOs yet" />
+      <ThreadTable me={me} threads={threads} onOpen={d.setOpenId} empty="No objectives yet" />
     </section>
 
     {d.starting && <NewMboDialog me={me} threads={threads} onClose={() => d.setStarting(false)}
@@ -408,7 +423,7 @@ const PERIODS = {
 };
 const BADGES = {
   agreed: { label: 'Most agreed', title: 'Most objectives agreed in this period' },
-  initiative: { label: 'Most initiative', title: 'Raised the most MBOs themselves' },
+  initiative: { label: 'Most initiative', title: 'Raised the most objectives themselves' },
   quick: { label: 'Quickest replies', title: 'Fastest average reply to their manager' },
 };
 /** A wait longer than this shows as overdue. */
@@ -478,20 +493,20 @@ function RateBar({ rate }) {
   return <span className="perf-rate"><span className="track"><i style={{ width: `${pct}%` }} /></span><b>{pct}%</b></span>;
 }
 
-/** One person's performance card: tiles + their MBOs in the period. */
+/** One person's performance card: tiles + their objectives in the period. */
 function PersonDialog({ me, row: r, period, onOpenThread, onClose }) {
   return (
     <Modal title={r.name} eyebrow={`Performance · ${PERIODS[period].label}`} onClose={onClose}>
       {r.badges.length > 0 && <div className="perf-badges"><Badges keys={r.badges} /></div>}
       <div className="perf-tiles">
-        <div><span>Objectives agreed</span><b>{r.acknowledged}</b><small>of {r.total} MBO(s)</small></div>
+        <div><span>Objectives agreed</span><b>{r.acknowledged}</b><small>of {r.total} objective(s)</small></div>
         <div><span>Agreement rate</span><b>{r.rate == null ? '—' : `${Math.round(r.rate * 100)}%`}</b><small>{r.denied} denied · {r.expired} expired</small></div>
         <div><span>Raised themselves</span><b>{r.initiated}</b><small>initiative</small></div>
         <div><span>Avg reply time</span><b>{fmtWait(r.avgReply)}</b><small>{r.replies} repl{r.replies === 1 ? 'y' : 'ies'}</small></div>
         <div><span>Rounds to agree</span><b>{r.avgRounds == null ? '—' : r.avgRounds.toFixed(1)}</b><small>lower = quicker alignment</small></div>
         <div className={r.oldestWait > OVERDUE ? 'warn' : ''}><span>Waiting on them</span><b>{r.waiting}</b><small>{r.waiting ? `oldest ${fmtWait(r.oldestWait)}` : 'nothing pending'}</small></div>
       </div>
-      <h4 className="perf-sub">MBOs in this period</h4>
+      <h4 className="perf-sub">Objectives in this period</h4>
       <ul className="perf-list">
         {r.threads.map((t) => (
           <li key={t.id} onClick={() => onOpenThread(t.id)}>
@@ -500,7 +515,7 @@ function PersonDialog({ me, row: r, period, onOpenThread, onClose }) {
           </li>
         ))}
       </ul>
-      <small className="dim">Figures cover MBOs active in the period. Badges go to whoever leads each measure among the people you can see.</small>
+      <small className="dim">Figures cover objectives active in the period. Badges go to whoever leads each measure among the people you can see.</small>
     </Modal>
   );
 }
@@ -523,7 +538,7 @@ function Performance({ me, threads, onOpenThread }) {
           {Object.entries(PERIODS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
         </select>
       </div>
-      {!rows.length ? <Empty title="No MBOs in this period" hint="Each person's record builds up as discussions close." /> : (
+      {!rows.length ? <Empty title="No objectives in this period" hint="Each person's record builds up as conversations close." /> : (
         <div className="table-wrap">
           <table className="leave-table">
             <thead>
@@ -557,7 +572,7 @@ function Performance({ me, threads, onOpenThread }) {
 }
 
 /**
- * Manager/director "MBOs" tab. threads are the reportees' (manager) or
+ * Manager/director "Objectives" tab. threads are the reportees' (manager) or
  * everyone else's (director); people is the list they can start one with.
  */
 export function OpsMbo({ me, isDirector, threads, people, reload }) {
@@ -618,10 +633,10 @@ export function OpsMbo({ me, isDirector, threads, people, reload }) {
           <option value="">All statuses</option>
           {Object.entries(STATUS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
         </select>
-        <span className="muted push">{shown.length} MBO(s)</span>
-        <button className="btn primary" onClick={() => d.setStarting(true)} disabled={!pickable.length}><Icon name="plus" />Start this week's MBO</button>
+        <span className="muted push">{shown.length} objective(s)</span>
+        <button className="btn primary" onClick={() => d.setStarting(true)} disabled={!pickable.length}><Icon name="plus" />New objective</button>
       </div>
-      <ThreadTable me={me} threads={shown} showName onOpen={d.setOpenId} empty={threads.length ? 'No matches' : 'No MBOs yet'} />
+      <ThreadTable me={me} threads={shown} showName onOpen={d.setOpenId} empty={threads.length ? 'No matches' : 'No objectives yet'} />
     </section>
 
     {d.starting && <NewMboDialog me={me} people={pickable} threads={threads} onClose={() => d.setStarting(false)}

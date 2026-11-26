@@ -1,4 +1,4 @@
-/* Teams — the People tab grouped by manager, and one person's details (leave, attendance, payroll, MBO). */
+/* Teams — the People tab grouped by manager, and one person's details (leave, attendance, payroll, objectives). */
 
 import { useEffect, useMemo, useState } from 'react';
 import { Avatar, Empty, Icon, Modal, call, fmtDuration, groupByDay, minutesBetween, todayStr } from './ui.jsx';
@@ -300,9 +300,9 @@ export function PersonDialog({ me, person, leaves, balanceOf, mbos, onLeaveChang
       <Payroll me={me} person={person} />
 
       <section className="person-sec">
-        <div className="person-sec-head"><h4><Icon name="chat" size={15} />MBOs</h4></div>
+        <div className="person-sec-head"><h4><Icon name="chat" size={15} />Objectives</h4></div>
         <div className="person-tiles">
-          <div><span>Objectives agreed</span><b>{agreed}</b><small>of {threads.length} MBO(s)</small></div>
+          <div><span>Objectives agreed</span><b>{agreed}</b><small>of {threads.length} objective(s)</small></div>
           <div><span>Agreement rate</span><b>{agreed + notAgreed ? `${Math.round((agreed / (agreed + notAgreed)) * 100)}%` : '—'}</b><small>{denied} denied · {expired} expired</small></div>
           <div className={open.some((t) => t.waitingOn === 'employee') ? 'warn' : ''}><span>Open</span><b>{open.length}</b>
             <small>{open.filter((t) => t.waitingOn === 'employee').length} waiting on them</small></div>

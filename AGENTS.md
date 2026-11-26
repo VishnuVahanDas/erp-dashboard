@@ -24,13 +24,14 @@ backend/   Java 24, Maven wrapper, no framework
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
     sync/SyncRequests.java       "Sync device" queue + agent heartbeat
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
-    mbo/MboStore.java            weekly MBO threads (grouped by month, expire when the week ends) and entries
+    mbo/MboStore.java            weekly MBO threads (shown as "Objectives" in the UI; up to 6 per
+                                 manager per week, grouped by month, expire when the week ends) and entries
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
     config/Env.java              env var / .env lookup
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views
   src/leave.jsx  leave module UI
-  src/mbo.jsx    MBO module UI + Performance panel
+  src/mbo.jsx    MBO module UI (labelled "Objectives") + Performance panel
   src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/team.jsx   People → Teams view and the person details dialog
   src/punchfix.jsx  missed-punch requests + incomplete-day list (employee) and approval queue (dashboard)
