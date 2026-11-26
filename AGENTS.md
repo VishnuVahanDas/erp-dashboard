@@ -39,6 +39,8 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/punchfix.jsx  missed-punch requests + incomplete-day list (employee) and approval queue (dashboard)
   src/overtime.jsx  overtime claims (employee, in Payslips) and Payroll → Overtime (approve / decline / grant)
   src/notify.jsx   notifications bell (GET /api/notifications)
+  src/calendar.jsx  My calendar on the employee's My dashboard: holidays, leave and attendance per day;
+                 its day rules copy PayrollStore (SHIFT_MIN, HALF_DAY_REQUIRED_MIN, GRACE_MIN), so change both together
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
 docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinned to vyom-erp

@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Avatar, Empty, Icon, Modal, Stat, Toasts, call, todayStr } from './ui.jsx';
 
-const CATS = {
+export const CATS = {
   personal: { label: 'Personal', short: 'P' },
   sick: { label: 'Sick', short: 'S' },
 };
 const STATUS_PILL = { approved: 'live', pending: 'warn', rejected: 'bad', cancelled: 'idle' };
-const HALF = { first: 'First half', second: 'Second half', late: 'Late arrival', early: 'Early departure' };
+export const HALF = { first: 'First half', second: 'Second half', late: 'Late arrival', early: 'Early departure' };
 /** Late arrival / early departure: a few hours of one day, counted as hours / 8. */
-const isShort = (h) => h === 'late' || h === 'early';
+export const isShort = (h) => h === 'late' || h === 'early';
 const HOURS_PER_DAY = 8;
 const HOUR_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
 const fmtHours = (h) => `${h} h`;
@@ -27,7 +27,7 @@ const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n)
 const isSunday = (s) => parse(s).getUTCDay() === 0;
 
 /** Company holidays (managed in Payroll): { 'yyyy-MM-dd': name }. Loaded once per view. */
-function useHolidays(me) {
+export function useHolidays(me) {
   const [map, setMap] = useState({});
   useEffect(() => {
     call('GET', '/api/payroll/holidays', null, me.token)

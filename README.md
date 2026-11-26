@@ -150,6 +150,16 @@ their home page. Approvers see the employee's Personal and Sick balance (for
 the request's year, pending counted as booked) on each pending request and in
 the Approve / Reject dialog.
 
+The employee's home page (**My dashboard**) also has **My calendar**: one month
+at a time, each day marked as a holiday, Sunday, approved or pending leave, or
+by attendance: worked (with the first-to-last span), short of the day, a missing
+punch or absent. It uses the payroll day rules: Mon-Sat, not a holiday, an
+8:30 h span lowered by approved leave, 10 minutes of grace. Pending leave
+doesn't excuse a day. Days before the person's first punch aren't marked absent.
+Clicking a day shows its punches, leave and holiday. It is built in the browser
+from `/api/attendance/my`, `/api/leave/my` and `/api/payroll/holidays`, with no
+endpoint of its own.
+
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | GET  | `/api/mbo/my` | signed in | own MBO threads with every entry |
