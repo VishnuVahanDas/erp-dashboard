@@ -1,0 +1,10 @@
+{
+  "baseUrl": "http://localhost:8088",
+  "accounts": [
+    { "label": "director", "email": "director@example.com", "password": "change-me" },
+    { "label": "manager", "email": "manager@example.com", "password": "change-me" },
+    { "label": "employee", "email": "employee@example.com", "password": "change-me" }
+  ],
+  "personIds": [],
+  "months": []
+}

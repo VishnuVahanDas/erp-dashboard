@@ -103,13 +103,20 @@ cd frontend && npm install && npm run dev         # UI on :5173, proxies /api
 docker compose up -d --build                      # full stack as in production -> :8088
 ```
 
-There is no automated test suite. Before committing:
+Before committing:
+- `cd backend && ./mvnw -q test` must pass: unit tests for the pay, leave and
+  overtime rules (`backend/src/test/`). Change a rule → change its test in the
+  same commit, and say why in the message.
 - `cd backend && ./mvnw -q -DskipTests package` must succeed.
 - `cd frontend && npm run build` must succeed.
 - No local JDK 24 / Node? `docker compose build backend web` runs the same
   Maven and Vite builds inside the images.
 - For behaviour changes, run the app and check the affected flow for each role
   it touches (director / manager / employee).
+- Backend refactors that must not change the API (such as the Spring Boot move):
+  take an API snapshot before and after with `tools/parity/` and diff them (see
+  README → Testing). `tools/parity/accounts.json` and `tools/parity/out/` hold
+  real logins and personal data, are git-ignored, and must never be committed.
 
 ## Security rules (hard requirements)
 

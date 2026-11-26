@@ -11,3 +11,7 @@ frontend/.vite/
 
 # Local database dumps (production personal data) - never commit
 db/
+
+# API parity snapshots (tools/parity): real logins and personal data - never commit
+tools/parity/accounts.json
+tools/parity/out/

@@ -56,6 +56,27 @@ docker compose down -v            # stop AND wipe the database
 To test **Sync device** locally, run the sdk agent on a Windows PC pointed at
 your database; without an agent the dashboard shows it as offline.
 
+### Testing
+
+```bash
+cd backend && ./mvnw -q test      # unit tests: pay (PayrollStore.compute), leave day counting, overtime bands
+```
+
+**API parity check** (for backend changes that must not change any response):
+
+```bash
+cp tools/parity/accounts.example.json tools/parity/accounts.json   # real director / manager / employee logins
+node tools/parity/snapshot.mjs old      # against the running stack (baseUrl, default :8088)
+# ... switch the backend to the new code ...
+node tools/parity/snapshot.mjs new
+node tools/parity/diff.mjs old new      # lists every response whose status or JSON changed
+```
+
+The snapshot only sends GET requests (plus one login per account). Each account
+also asks for the others' data, so permission answers are compared too.
+`accounts.json` and `tools/parity/out/` are git-ignored: they hold passwords
+and personal data.
+
 ## Production (VPS)
 
 Copy (or `git clone`) only this folder to the VPS, then:
