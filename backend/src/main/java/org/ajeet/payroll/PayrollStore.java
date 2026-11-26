@@ -34,8 +34,9 @@ import java.util.Map;
  * half-day: 4 h; late/early of X h: 8:30 - X h). Missed time per day is capped
  * at 8 h (an absent day costs one day's pay); up to 10 minutes is forgiven,
  * anything more is rounded up to the next half hour. Cut = hour rate *
- * (missed + director's correction). Approved overtime (quarter days, see
- * OvertimeStore) adds day rate * overtime days: net = gross - cut + overtime.
+ * (missed + director's correction). Approved overtime (quarter days past a
+ * 9:00 h span, see OvertimeStore) adds day rate * overtime days:
+ * net = gross - cut + overtime.
  *
  * A run is per month: draft (regenerate / correct freely) -> finalized
  * (locked) -> paid. Salaries are append-only rows with an effective date.
@@ -44,7 +45,7 @@ import java.util.Map;
  */
 public class PayrollStore {
 
-    static final int SHIFT_MIN = 8 * 60 + 30; // 8:30 h day, lunch inside (OvertimeStore.FULL_DAY_MIN)
+    static final int SHIFT_MIN = 8 * 60 + 30; // 8:30 h day, lunch inside; overtime counts from 9:00 h
     static final int WORK_MIN = 8 * 60;       // paid working time per day
     static final int HALF_DAY_REQUIRED_MIN = 4 * 60;
     static final int GRACE_MIN = 10;

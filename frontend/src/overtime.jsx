@@ -1,5 +1,5 @@
 /*
- * Overtime — time past the 8:30 h day (first-to-last punch, lunch included), paid in quarter days once a
+ * Overtime — time past a 9:00 h span (first-to-last punch, lunch included), paid in quarter days once a
  * director or the person's manager approves it. The employee claims a past day from their punches, or an
  * approver approves a day straight away. Payroll pays approved days at the day rate.
  */
@@ -9,9 +9,9 @@ import { Avatar, Empty, Icon, Modal, Toasts, call, fmtDuration } from './ui.jsx'
 
 const PILL = { pending: 'warn', approved: 'live', rejected: 'bad', cancelled: 'idle' };
 const STATUS = { pending: 'pending', approved: 'approved', rejected: 'declined', cancelled: 'withdrawn' };
-export const OT_RULE = 'Overtime is time past an 8:30 h day (first to last punch, lunch included): '
-  + '30 min–2 h = ¼ day, over 2–4 h = ½ day, over 4–6 h = ¾ day, over 6 h = 1 day (the most for one day). '
-  + 'Under 30 minutes doesn’t count. Approved days are paid at the day rate.';
+export const OT_RULE = 'Overtime counts from a 9:00 h span (first to last punch, lunch included; 8:30 h is a full day). '
+  + 'Past 9:00: 30 min–2 h = ¼ day, over 2–4 h = ½ day, over 4–6 h = ¾ day, over 6 h = 1 day (the most for one day). '
+  + 'Under 30 minutes past 9:00 doesn’t count. Approved days are paid at the day rate.';
 
 const fmtDay = (s) => new Date(`${s}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtStamp = (ms) => (ms ? new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -209,7 +209,7 @@ export function OvertimePanel({ me, flash, setError, onCount, onPerson }) {
       {!data.available.length ? <p className="dim">No unclaimed overtime. {OT_RULE}</p> : (
         <div className="table-wrap">
           <table className="leave-table">
-            <thead><tr><th>Person</th><th>Day</th><th>In–out</th><th>Worked</th><th>Over 8:30 h</th><th>Pays</th><th /></tr></thead>
+            <thead><tr><th>Person</th><th>Day</th><th>In–out</th><th>Worked</th><th>Over 9:00 h</th><th>Pays</th><th /></tr></thead>
             <tbody>
               {data.available.map((a) => (
                 <tr key={`${a.accountId}-${a.day}`}>

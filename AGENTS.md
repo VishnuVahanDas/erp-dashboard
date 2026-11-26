@@ -26,8 +26,9 @@ backend/   Java 24, Maven wrapper, no framework
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
     mbo/MboStore.java            MBO threads and entries
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
-    overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, full
-                                 day = 8:30 h span (same as PayrollStore.SHIFT_MIN); payroll pays approved days
+    overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, counted
+                                 from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollStore.SHIFT_MIN
+                                 = 8:30 h); payroll pays approved days
     config/Env.java              env var / .env lookup
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views

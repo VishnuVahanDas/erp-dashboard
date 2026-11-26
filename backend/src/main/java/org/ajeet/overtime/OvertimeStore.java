@@ -18,11 +18,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Overtime: time past the 8:30 h full day (first-to-last punch span, lunch
- * included), paid in quarter days once approved:
+ * Overtime: time past a 9:00 h first-to-last punch span (lunch included),
+ * paid in quarter days once approved. 8:30 h is a full day for payroll (no
+ * cut); the half hour up to 9:00 is neither cut nor paid. Past 9:00:
  *
  *   under 30 min -> 0 · 30 min-2 h -> 0.25 · over 2-4 h -> 0.5 ·
  *   over 4-6 h -> 0.75 · over 6 h -> 1 day (the most for one day)
+ *
+ * As spans: under 9:30 -> 0 · 9:30-11:00 -> 0.25 · over 11-13 h -> 0.5 ·
+ * over 13-15 h -> 0.75 · over 15 h -> 1.
  *
  * The span comes from device punches widened by an approved missed-punch fix,
  * the same way payroll reads a day. An employee claims a past day, or a
@@ -33,9 +37,9 @@ import java.util.List;
  */
 public class OvertimeStore {
 
-    /** A full day: an 8:30 h span. Payroll uses the same length. */
-    public static final int FULL_DAY_MIN = 8 * 60 + 30;
-    /** Less than this past a full day isn't overtime. */
+    /** Overtime is counted from a 9:00 h span (a full day for payroll is 8:30 h). */
+    public static final int OT_START_MIN = 9 * 60;
+    /** Less than this past 9:00 h isn't overtime. */
     public static final int MIN_OT_MIN = 30;
     /** How far back "overtime you can claim" looks. */
     public static final int LOOKBACK_DAYS = 62;
@@ -209,8 +213,8 @@ public class OvertimeStore {
             ps.setTime(3, Time.valueOf(s.first().toLocalTime()));
             ps.setTime(4, Time.valueOf(s.last().toLocalTime()));
             ps.setInt(5, s.minutes());
-            ps.setInt(6, s.minutes() - FULL_DAY_MIN);
-            ps.setDouble(7, otDays(s.minutes() - FULL_DAY_MIN));
+            ps.setInt(6, s.minutes() - OT_START_MIN);
+            ps.setDouble(7, otDays(s.minutes() - OT_START_MIN));
             ps.setLong(8, id);
             if (ps.executeUpdate() == 0) throw new IllegalArgumentException("this claim was already decided");
         } catch (SQLException e) {
@@ -238,7 +242,7 @@ public class OvertimeStore {
                 INSERT INTO overtime_claims (account_id, day, first_punch, last_punch, span_min, ot_min, days, reason,
                     status, requested_by, decided_by, decided_at, decision_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN now() END, ?) RETURNING id""")) {
-            int ot = s.minutes() - FULL_DAY_MIN;
+            int ot = s.minutes() - OT_START_MIN;
             ps.setLong(1, accountId);
             ps.setDate(2, Date.valueOf(d));
             ps.setTime(3, Time.valueOf(s.first().toLocalTime()));
@@ -268,10 +272,10 @@ public class OvertimeStore {
     private Span requireOvertime(long accountId, LocalDate d) throws IOException {
         Span s = span(accountId, d);
         if (s == null) throw new IllegalArgumentException("no punches on " + d);
-        int ot = s.minutes() - FULL_DAY_MIN;
+        int ot = s.minutes() - OT_START_MIN;
         if (otDays(ot) == 0)
             throw new IllegalArgumentException("the punches on " + d + " show " + hm(s.minutes())
-                    + " - overtime starts at 30 minutes past 8:30 h (9:00 h)");
+                    + " - overtime counts from 9:00 h, and needs at least 30 minutes past it (9:30 h)");
         return s;
     }
 
@@ -336,12 +340,12 @@ public class OvertimeStore {
             ps.setDate(i++, Date.valueOf(from));
             ps.setDate(i++, Date.valueOf(today));
             for (Object p : params) ps.setObject(i++, p);
-            ps.setInt(i, FULL_DAY_MIN + MIN_OT_MIN);
+            ps.setInt(i, OT_START_MIN + MIN_OT_MIN);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     int span = rs.getInt(7);
                     out.add(new Available(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                            rs.getString(5), rs.getString(6), span, span - FULL_DAY_MIN, otDays(span - FULL_DAY_MIN)));
+                            rs.getString(5), rs.getString(6), span, span - OT_START_MIN, otDays(span - OT_START_MIN)));
                 }
             }
         } catch (SQLException e) {
