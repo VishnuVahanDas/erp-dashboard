@@ -18,7 +18,7 @@ backend/   Java 24, Maven wrapper, no framework
     web/Http.java                shared helpers: ObjectMapper, send/readJson, session + role guards, query parsing
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
     web/routes/<Module>Routes    one per area: Sync, Auth, Attendance, People, Leave, Mbo,
-                                 Notification, PunchFix, Payroll (JDK com.sun.net.httpserver + Jackson)
+                                 Notification, PunchFix, Payroll, Overtime (JDK com.sun.net.httpserver + Jackson)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
@@ -26,6 +26,8 @@ backend/   Java 24, Maven wrapper, no framework
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
     mbo/MboStore.java            MBO threads and entries
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
+    overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, full
+                                 day = 8:30 h span (same as PayrollStore.SHIFT_MIN); payroll pays approved days
     config/Env.java              env var / .env lookup
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views
@@ -34,6 +36,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/payroll.jsx  payroll UI: director run / salaries / holidays, manager view, payslips
   src/team.jsx   People → Teams view and the person details dialog
   src/punchfix.jsx  missed-punch requests + incomplete-day list (employee) and approval queue (dashboard)
+  src/overtime.jsx  overtime claims (employee, in Payslips) and Payroll → Overtime (approve / decline / grant)
   src/notify.jsx   notifications bell (GET /api/notifications)
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles

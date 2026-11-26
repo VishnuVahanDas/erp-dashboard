@@ -24,15 +24,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Payroll: fixed monthly salary, cut for hours missed from the 9-hour shift.
+ * Payroll: fixed monthly salary, cut for hours missed from the 8:30 h day,
+ * plus approved overtime.
  *
  * Day rate = monthly gross / days in that month; hour rate = day rate / 8.
  * Each working day (Mon-Sat, not a holiday, from the salary's start date, up to
- * yesterday while the month is running) needs a 9 h first-to-last punch span,
- * lowered by approved leave (full day: skipped; half-day: 4 h; late/early of
- * X h: 9 - X h). Missed time per day is capped at 8 h (an absent day costs one
- * day's pay); up to 10 minutes is forgiven, anything more is rounded up to the
- * next half hour. Cut = hour rate * (missed + director's correction).
+ * yesterday while the month is running) needs an 8:30 h first-to-last punch
+ * span (lunch included), lowered by approved leave (full day: skipped;
+ * half-day: 4 h; late/early of X h: 8:30 - X h). Missed time per day is capped
+ * at 8 h (an absent day costs one day's pay); up to 10 minutes is forgiven,
+ * anything more is rounded up to the next half hour. Cut = hour rate *
+ * (missed + director's correction). Approved overtime (quarter days, see
+ * OvertimeStore) adds day rate * overtime days: net = gross - cut + overtime.
  *
  * A run is per month: draft (regenerate / correct freely) -> finalized
  * (locked) -> paid. Salaries are append-only rows with an effective date.
@@ -41,7 +44,7 @@ import java.util.Map;
  */
 public class PayrollStore {
 
-    static final int SHIFT_MIN = 9 * 60;      // 9 h shift, 1 h lunch inside
+    static final int SHIFT_MIN = 8 * 60 + 30; // 8:30 h day, lunch inside (OvertimeStore.FULL_DAY_MIN)
     static final int WORK_MIN = 8 * 60;       // paid working time per day
     static final int HALF_DAY_REQUIRED_MIN = 4 * 60;
     static final int GRACE_MIN = 10;
@@ -75,21 +78,24 @@ public class PayrollStore {
     public record Holiday(String day, String name) {}
 
     /** status: draft | finalized | paid. month is yyyy-MM. */
+    /** overtimeChanged: a draft whose month has overtime approved after it was generated. */
     public record Run(String month, String status, long generatedAt, Long finalizedAt, String finalizedBy,
-                      String paidOn, int people, double totalNet) {}
+                      String paidOn, int people, double totalNet, boolean overtimeChanged) {}
 
     /** One employee's month. gross is prorated for a mid-month start. */
     public record Line(String month, String status, long accountId, String name, String email, boolean linked,
                        double basic, double hra, double otherAllowance, double fullGross, double gross,
                        int workingDays, double missedHours, double correctionHours, String correctionNote,
-                       double dayRate, double hourRate, double cut, double net, String paidOn) {}
+                       double dayRate, double hourRate, double cut, double net, String paidOn,
+                       double overtimeDays, double overtimePay) {}
 
     /**
      * One calendar day of a line's breakdown. type: work | sunday | holiday |
      * leave | before (salary not started) | future. Times are device-local HH:mm.
+     * otMin / otDays: approved overtime that day (0 on lines generated before overtime existed).
      */
     public record Day(String date, String type, String note, String first, String last,
-                      int spanMin, int requiredMin, int missedMin) {}
+                      int spanMin, int requiredMin, int missedMin, int otMin, double otDays) {}
 
     public record SalaryInput(long accountId, double basic, double hra, double otherAllowance, String effectiveFrom) {}
 
@@ -167,6 +173,9 @@ public class PayrollStore {
                             days             TEXT NOT NULL DEFAULT '[]',
                             PRIMARY KEY (month, account_id)
                         )""");
+                // approved overtime paid in the month: net = gross - cut + ot_pay
+                st.execute("ALTER TABLE payroll_lines ADD COLUMN IF NOT EXISTS ot_days NUMERIC(6,2) NOT NULL DEFAULT 0");
+                st.execute("ALTER TABLE payroll_lines ADD COLUMN IF NOT EXISTS ot_pay NUMERIC(12,2) NOT NULL DEFAULT 0");
             }
         } catch (SQLException e) {
             throw new IOException("PayrollStore init failed: " + e.getMessage(), e);
@@ -497,6 +506,10 @@ public class PayrollStore {
     public synchronized List<Run> runs(Long managerId) throws IOException {
         String lineScope = managerId == null ? "" : " AND l.account_id <> ? AND l.account_id IN"
                 + " (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)";
+        String otChanged = tableExists("overtime_claims") ? """
+                (r.status = 'draft' AND EXISTS (SELECT 1 FROM overtime_claims o WHERE o.status = 'approved'
+                    AND o.day >= r.month AND o.day < r.month + interval '1 month' AND o.decided_at > r.generated_at))"""
+                : "false";
         List<Run> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
                      SELECT to_char(r.month, 'YYYY-MM'), r.status,
@@ -506,7 +519,8 @@ public class PayrollStore {
                             (SELECT count(*) FROM payroll_lines l WHERE l.month = r.month""" + lineScope + """
                      ),
                             (SELECT COALESCE(SUM(net), 0) FROM payroll_lines l WHERE l.month = r.month""" + lineScope + """
-                     )
+                     ), """ + otChanged + """
+
                      FROM payroll_runs r
                      LEFT JOIN accounts f ON f.id = r.finalized_by
                      """ + (managerId != null ? "WHERE r.status <> 'draft' " : "") + "ORDER BY r.month DESC")) {
@@ -516,7 +530,7 @@ public class PayrollStore {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new Run(rs.getString(1), rs.getString(2), rs.getLong(3), (Long) rs.getObject(4),
-                            rs.getString(5), rs.getString(6), rs.getInt(7), rs.getDouble(8)));
+                            rs.getString(5), rs.getString(6), rs.getInt(7), rs.getDouble(8), rs.getBoolean(9)));
                 }
             }
         } catch (SQLException e) {
@@ -540,6 +554,18 @@ public class PayrollStore {
 
     /** One's own finalized/paid payslips, newest first. */
     public synchronized List<Line> myLines(long accountId) throws IOException {
+        return lines("l.account_id = ? AND r.status <> 'draft'", accountId);
+    }
+
+    /**
+     * One person's lines across months, newest first. Directors see every
+     * month; a manager their reportee's finalized/paid months; anyone their own
+     * finalized/paid months.
+     */
+    public synchronized List<Line> personLines(AuthStore.Account who, long accountId) throws IOException {
+        if (who.has(AuthStore.DIRECTOR)) return lines("l.account_id = ?", accountId);
+        if (accountId != who.id() && !(who.has(AuthStore.MANAGER) && reportsTo(accountId, who.id())))
+            throw new ForbiddenException("you can't see this person's pay");
         return lines("l.account_id = ? AND r.status <> 'draft'", accountId);
     }
 
@@ -625,15 +651,16 @@ public class PayrollStore {
                 Map<LocalDate, LocalDateTime[]> spans = enroll == null ? new HashMap<>() : punchSpans(enroll, first, last);
                 Map<LocalDate, String> fixed = mergeApprovedFixes(accountId, first, last, spans);
                 Map<LocalDate, Leave> leave = approvedLeave(accountId, first, last);
+                Map<LocalDate, Overtime> overtime = approvedOvertime(accountId, first, last);
                 Object[] corr = corrections.getOrDefault(accountId, new Object[]{0.0, ""});
                 Computed c = compute(ym, basic + hra + other, effective, countUntil, holidays, leave, spans,
-                        fixed, (Double) corr[0]);
+                        fixed, overtime, (Double) corr[0]);
 
                 try (PreparedStatement ps = conn.prepareStatement("""
                         INSERT INTO payroll_lines (month, account_id, linked, basic, hra, other_allowance, full_gross,
                             gross, working_days, missed_h, correction_h, correction_note, day_rate, hour_rate,
-                            cut, net, days)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+                            cut, net, days, ot_days, ot_pay)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
                     ps.setDate(1, Date.valueOf(first));
                     ps.setLong(2, accountId);
                     ps.setBoolean(3, enroll != null);
@@ -651,6 +678,8 @@ public class PayrollStore {
                     ps.setDouble(15, c.cut);
                     ps.setDouble(16, c.net);
                     ps.setString(17, json.writeValueAsString(c.days));
+                    ps.setDouble(18, c.otDays);
+                    ps.setDouble(19, c.otPay);
                     ps.executeUpdate();
                 }
                 n++;
@@ -668,7 +697,7 @@ public class PayrollStore {
         }
     }
 
-    /** Director's +/- missed-hours correction on a draft line; recomputes cut and net. */
+    /** Director's +/- missed-hours correction on a draft line; recomputes cut and net (overtime stays). */
     public synchronized void correct(YearMonth ym, long accountId, double hours, String note) throws IOException {
         requireStatus(ym, "draft", "corrected");
         if (Math.abs(hours) > 300 || hours * 2 != Math.floor(hours * 2))
@@ -679,7 +708,7 @@ public class PayrollStore {
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE payroll_lines SET correction_h = ?, correction_note = ?,
                     cut = ROUND(hour_rate * GREATEST(0, missed_h + ?::numeric), 2),
-                    net = GREATEST(0, gross - ROUND(hour_rate * GREATEST(0, missed_h + ?::numeric), 2))
+                    net = GREATEST(0, gross - ROUND(hour_rate * GREATEST(0, missed_h + ?::numeric), 2)) + ot_pay
                 WHERE month = ? AND account_id = ?""")) {
             ps.setDouble(1, hours);
             ps.setString(2, n);
@@ -724,17 +753,22 @@ public class PayrollStore {
     /** Approved leave on one day: full day, or how many minutes of the shift it covers. */
     record Leave(boolean fullDay, int coveredMin, String note) {}
 
+    /** Approved overtime on one day. */
+    record Overtime(int otMin, double days, String note) {}
+
     record Computed(int workingDays, double missedHours, double dayRate, double hourRate, double gross,
-                    double cut, double net, List<Day> days) {}
+                    double cut, double otDays, double otPay, double net, List<Day> days) {}
 
     /**
      * The pay rules for one person and month, without any database access.
      * spans: date -> {first punch, last punch}. correctionHours adds to missed.
+     * overtime: approved overtime per day, paid at the day rate on any day the
+     * salary has started (a Sunday or holiday too).
      */
     static Computed compute(YearMonth ym, double fullGross, LocalDate effectiveFrom, LocalDate countUntil,
                             Map<LocalDate, String> holidays, Map<LocalDate, Leave> leave,
                             Map<LocalDate, LocalDateTime[]> spans, Map<LocalDate, String> fixed,
-                            double correctionHours) {
+                            Map<LocalDate, Overtime> overtime, double correctionHours) {
         int daysInMonth = ym.lengthOfMonth();
         double dayRate = fullGross / daysInMonth;
         double hourRate = dayRate / 8.0;
@@ -743,30 +777,41 @@ public class PayrollStore {
         double gross = start.equals(first) ? round2(fullGross) : round2(dayRate * paidDays);
 
         int workingDays = 0, missedMin = 0;
+        double otDays = 0;
         List<Day> days = new ArrayList<>();
         for (LocalDate d = first; !d.isAfter(ym.atEndOfMonth()); d = d.plusDays(1)) {
             LocalDateTime[] span = spans.get(d);
             String f = span == null ? null : span[0].toLocalTime().toString().substring(0, 5);
             String l = span == null ? null : span[1].toLocalTime().toString().substring(0, 5);
             int spanMin = span == null ? 0 : (int) java.time.Duration.between(span[0], span[1]).toMinutes();
-            if (d.isBefore(start)) { days.add(new Day(d.toString(), "before", "before salary start", f, l, spanMin, 0, 0)); continue; }
-            if (d.getDayOfWeek() == DayOfWeek.SUNDAY) { days.add(new Day(d.toString(), "sunday", "Sunday", f, l, spanMin, 0, 0)); continue; }
-            if (holidays.containsKey(d)) { days.add(new Day(d.toString(), "holiday", holidays.get(d), f, l, spanMin, 0, 0)); continue; }
-            if (d.isAfter(countUntil)) { days.add(new Day(d.toString(), "future", "not counted yet", f, l, spanMin, 0, 0)); continue; }
+            if (d.isBefore(start)) { days.add(new Day(d.toString(), "before", "before salary start", f, l, spanMin, 0, 0, 0, 0)); continue; }
+            Overtime ot = overtime.get(d);
+            int otMin = ot == null ? 0 : ot.otMin();
+            double otD = ot == null ? 0 : ot.days();
+            otDays += otD;
+            String otNote = ot == null ? null : ot.note();
+            if (d.getDayOfWeek() == DayOfWeek.SUNDAY) { days.add(new Day(d.toString(), "sunday", notes("Sunday", otNote), f, l, spanMin, 0, 0, otMin, otD)); continue; }
+            if (holidays.containsKey(d)) { days.add(new Day(d.toString(), "holiday", notes(holidays.get(d), otNote), f, l, spanMin, 0, 0, otMin, otD)); continue; }
+            if (d.isAfter(countUntil)) { days.add(new Day(d.toString(), "future", notes("not counted yet", otNote), f, l, spanMin, 0, 0, otMin, otD)); continue; }
             Leave lv = leave.get(d);
-            if (lv != null && lv.fullDay()) { days.add(new Day(d.toString(), "leave", lv.note(), f, l, spanMin, 0, 0)); continue; }
+            if (lv != null && lv.fullDay()) { days.add(new Day(d.toString(), "leave", notes(lv.note(), otNote), f, l, spanMin, 0, 0, otMin, otD)); continue; }
             int required = Math.max(0, SHIFT_MIN - (lv == null ? 0 : lv.coveredMin()));
             int missed = missedMinutes(required, spanMin);
             workingDays++;
             missedMin += missed;
-            String note = String.join(", ", java.util.stream.Stream.of(lv == null ? null : lv.note(), fixed.get(d))
-                    .filter(x -> x != null && !x.isEmpty()).toList());
-            days.add(new Day(d.toString(), "work", note, f, l, spanMin, required, missed));
+            days.add(new Day(d.toString(), "work", notes(lv == null ? null : lv.note(), fixed.get(d), otNote),
+                    f, l, spanMin, required, missed, otMin, otD));
         }
         double missedHours = missedMin / 60.0;
         double cut = round2(hourRate * Math.max(0, missedHours + correctionHours));
+        double otPay = round2(dayRate * otDays);
         return new Computed(workingDays, missedHours, round4(dayRate), round4(hourRate), gross, cut,
-                Math.max(0, round2(gross - cut)), days);
+                otDays, otPay, round2(Math.max(0, round2(gross - cut)) + otPay), days);
+    }
+
+    /** The non-empty notes joined with ", ". */
+    private static String notes(String... parts) {
+        return String.join(", ", java.util.Arrays.stream(parts).filter(x -> x != null && !x.isEmpty()).toList());
     }
 
     /** Short of the required span: capped at 8 h, 10-minute grace, then up to the next half hour. */
@@ -864,6 +909,32 @@ public class PayrollStore {
         return out;
     }
 
+    /** Approved overtime per day in the month. overtime_claims may not exist on an older database. */
+    private Map<LocalDate, Overtime> approvedOvertime(long accountId, LocalDate first, LocalDate last) throws SQLException {
+        Map<LocalDate, Overtime> out = new HashMap<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT to_regclass('overtime_claims') IS NOT NULL")) {
+            rs.next();
+            if (!rs.getBoolean(1)) return out;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT o.day, o.ot_min, o.days, COALESCE(NULLIF(d.full_name,''), d.email)
+                FROM overtime_claims o LEFT JOIN accounts d ON d.id = o.decided_by
+                WHERE o.account_id = ? AND o.status = 'approved' AND o.day BETWEEN ? AND ?""")) {
+            ps.setLong(1, accountId);
+            ps.setDate(2, Date.valueOf(first));
+            ps.setDate(3, Date.valueOf(last));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    double days = rs.getDouble(3);
+                    out.put(rs.getDate(1).toLocalDate(), new Overtime(rs.getInt(2), days,
+                            "overtime " + fmtH(days) + " day (approved by " + rs.getString(4) + ")"));
+                }
+            }
+        }
+        return out;
+    }
+
     /** Approved leave per day in the month. Several partial requests on one day add up. */
     private Map<LocalDate, Leave> approvedLeave(long accountId, LocalDate first, LocalDate last) throws SQLException {
         Map<LocalDate, Leave> out = new HashMap<>();
@@ -895,6 +966,18 @@ public class PayrollStore {
             }
         }
         return out;
+    }
+
+    private boolean tableExists(String table) throws IOException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT to_regclass(?) IS NOT NULL")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getBoolean(1);
+            }
+        } catch (SQLException e) {
+            throw new IOException("table check failed: " + e.getMessage(), e);
+        }
     }
 
     private boolean reportsTo(long employeeId, long managerId) throws IOException {
@@ -932,7 +1015,7 @@ public class PayrollStore {
                 SELECT to_char(l.month, 'YYYY-MM'), r.status, l.account_id, COALESCE(NULLIF(a.full_name,''), a.email),
                        a.email, l.linked, l.basic, l.hra, l.other_allowance, l.full_gross, l.gross, l.working_days,
                        l.missed_h, l.correction_h, l.correction_note, l.day_rate, l.hour_rate, l.cut, l.net,
-                       r.paid_on::text
+                       r.paid_on::text, l.ot_days, l.ot_pay
                 FROM payroll_lines l
                 JOIN payroll_runs r ON r.month = l.month
                 JOIN accounts a ON a.id = l.account_id
@@ -944,7 +1027,8 @@ public class PayrollStore {
                     out.add(new Line(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getString(4), rs.getString(5),
                             rs.getBoolean(6), rs.getDouble(7), rs.getDouble(8), rs.getDouble(9), rs.getDouble(10),
                             rs.getDouble(11), rs.getInt(12), rs.getDouble(13), rs.getDouble(14), rs.getString(15),
-                            rs.getDouble(16), rs.getDouble(17), rs.getDouble(18), rs.getDouble(19), rs.getString(20)));
+                            rs.getDouble(16), rs.getDouble(17), rs.getDouble(18), rs.getDouble(19), rs.getString(20),
+                            rs.getDouble(21), rs.getDouble(22)));
                 }
             }
         } catch (SQLException e) {

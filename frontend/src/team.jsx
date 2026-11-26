@@ -7,7 +7,7 @@ import { PersonQuotaDialog } from './leave.jsx';
 
 const CAT = { personal: 'Personal', sick: 'Sick' };
 const LEAVE_PILL = { approved: 'live', pending: 'warn', rejected: 'bad', cancelled: 'idle' };
-const SHORT_MIN = 9 * 60 - 10; // a present day with a shorter span than the 9 h shift (10 min grace)
+const SHORT_MIN = 8 * 60 + 30 - 10; // a present day with a shorter span than the 8:30 h day (10 min grace)
 
 const thisMonth = () => todayStr().slice(0, 7);
 const shiftMonth = (ym, n) => {
@@ -187,7 +187,7 @@ function Attendance({ me, person }) {
           <div><span>Hours logged</span><b>{fmtDuration(stats.total)}</b><small>first → last punch</small></div>
           <div><span>Average a day</span><b>{fmtDuration(stats.avg)}</b><small>on days present</small></div>
           <div className={stats.short ? 'warn' : ''}><span>Short days</span><b>{stats.short}</b>
-            <small>{stats.single ? `${stats.single} with a single punch` : 'under the 9 h shift'}</small></div>
+            <small>{stats.single ? `${stats.single} with a single punch` : 'under the 8:30 h day'}</small></div>
         </div>
       )}
     </section>

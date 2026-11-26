@@ -9,7 +9,7 @@ const ago = (ms) => {
 };
 const ICON = {
   leave: 'calendar', 'leave-decided': 'calendar', fix: 'clock', 'fix-decided': 'clock', 'missed-punch': 'clock',
-  recommendation: 'money', salary: 'money', mbo: 'chat',
+  recommendation: 'money', salary: 'money', mbo: 'chat', overtime: 'bolt', 'overtime-decided': 'bolt',
 };
 
 export function NotificationBell({ me, role, onGo }) {

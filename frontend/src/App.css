@@ -784,6 +784,10 @@ tbody tr:last-child td { border-bottom: none; }
 .pay-propose > span:last-child b { color: var(--cyan); }
 .pay-sections .nav-count { margin-left: 6px; }
 .pay-foot { margin-top: 8px; font-size: 12px; }
+.pay-sub { font-size: 12px; color: var(--muted); margin: 4px 0 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+button.link.who { text-align: left; color: inherit; font: inherit; }
+button.link.who:hover > span { color: var(--cyan); }
+.ot-box { margin-bottom: 14px; }
 .pay-days-sum { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
 .pay-days-sum b { color: var(--text); font-family: var(--mono); }
 .pay-days-sum .warn { color: var(--saffron); }

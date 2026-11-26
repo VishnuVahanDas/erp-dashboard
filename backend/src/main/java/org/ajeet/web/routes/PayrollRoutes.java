@@ -104,6 +104,11 @@ public class PayrollRoutes implements Routes {
             payroll.correct(PayrollStore.month(parts[3]), Long.parseLong(parts[4]),
                     number(b, "hours"), b.path("note").asText(""));
             http.send(ex, 200, mapper.createObjectNode().put("ok", true));
+        } else if (method.equals("GET") && path.matches("/payroll/person/\\d+")) {
+            // one person's months: directors all, managers their reportees' locked months, anyone their own
+            AuthStore.Account acct = http.requireAccount(ex);
+            http.send(ex, 200, mapper.createObjectNode().set("lines",
+                    mapper.valueToTree(payroll.personLines(acct, Long.parseLong(path.split("/")[3])))));
         } else if (method.equals("GET") && path.equals("/payroll/my")) {
             AuthStore.Account acct = http.requireAccount(ex);
             http.send(ex, 200, mapper.createObjectNode().set("payslips", mapper.valueToTree(payroll.myLines(acct.id()))));

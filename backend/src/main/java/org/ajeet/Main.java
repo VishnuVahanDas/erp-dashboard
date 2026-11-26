@@ -6,6 +6,7 @@ import org.ajeet.auth.AuthStore;
 import org.ajeet.config.Env;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
+import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.sync.SyncRequests;
 import org.ajeet.web.ApiServer;
@@ -15,6 +16,7 @@ import org.ajeet.web.routes.AuthRoutes;
 import org.ajeet.web.routes.LeaveRoutes;
 import org.ajeet.web.routes.MboRoutes;
 import org.ajeet.web.routes.NotificationRoutes;
+import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.ajeet.web.routes.PeopleRoutes;
 import org.ajeet.web.routes.PunchFixRoutes;
@@ -54,6 +56,8 @@ public class Main {
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
         // after AuthStore: punch_fixes references accounts
         PunchFixStore punchFixes = new PunchFixStore(pgUrl, pgUser, pgPass);
+        // after PunchFixStore and PayrollStore: overtime reads punch_fixes and payroll_runs
+        OvertimeStore overtime = new OvertimeStore(pgUrl, pgUser, pgPass);
 
         // route modules, asked in this order (the order the routes were always matched in)
         Http http = new Http(auth);
@@ -64,9 +68,10 @@ public class Main {
                 new PeopleRoutes(http, auth, attendance),
                 new LeaveRoutes(http, leave, auth),
                 new MboRoutes(http, mbo),
-                new NotificationRoutes(http, auth, leave, mbo, payroll, punchFixes),
+                new NotificationRoutes(http, auth, leave, mbo, payroll, punchFixes, overtime),
                 new PunchFixRoutes(http, punchFixes),
-                new PayrollRoutes(http, payroll));
+                new PayrollRoutes(http, payroll),
+                new OvertimeRoutes(http, overtime));
         new ApiServer(http, routes, attendance.describe()).start(port);
     }
 }

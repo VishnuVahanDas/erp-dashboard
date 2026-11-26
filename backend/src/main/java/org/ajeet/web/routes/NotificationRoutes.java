@@ -8,6 +8,7 @@ import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
+import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.web.Http;
 
@@ -26,9 +27,10 @@ public class NotificationRoutes implements Routes {
     private final MboStore mbo;
     private final PayrollStore payroll;
     private final PunchFixStore punchFixes;
+    private final OvertimeStore overtime;
 
     public NotificationRoutes(Http http, AuthStore auth, LeaveStore leave, MboStore mbo,
-                              PayrollStore payroll, PunchFixStore punchFixes) {
+                              PayrollStore payroll, PunchFixStore punchFixes, OvertimeStore overtime) {
         this.http = http;
         this.mapper = http.mapper();
         this.auth = auth;
@@ -36,6 +38,7 @@ public class NotificationRoutes implements Routes {
         this.mbo = mbo;
         this.payroll = payroll;
         this.punchFixes = punchFixes;
+        this.overtime = overtime;
     }
 
     @Override
@@ -78,6 +81,13 @@ public class NotificationRoutes implements Routes {
                             f.day() + " · by " + f.decidedBy()
                                     + (f.decisionNote() == null || f.decisionNote().isBlank() ? "" : " - \"" + f.decisionNote() + "\""),
                             "log", f.decidedAt()));
+            for (OvertimeStore.Claim c : overtime.mine(me))
+                if (c.selfRequested() && c.decidedAt() != null && c.decidedAt() > weekAgo && !c.status().equals("cancelled"))
+                    out.add(item("overtime-decided", c.id(),
+                            "Overtime " + (c.status().equals("rejected") ? "declined" : c.status()),
+                            c.day() + " · " + days(c.days()) + " · by " + c.decidedBy()
+                                    + (c.decisionNote() == null || c.decisionNote().isBlank() ? "" : " - \"" + c.decisionNote() + "\""),
+                            "payslips", c.decidedAt()));
         } else {
             boolean director = as.equals(AuthStore.DIRECTOR);
             // a manager-view only covers their reportees, even for someone who is also a director
@@ -91,6 +101,10 @@ public class NotificationRoutes implements Routes {
             for (PunchFixStore.PunchFix f : director ? punchFixes.all() : punchFixes.forTeam(me))
                 if (f.status().equals("pending") && inScope.test(f.accountId()))
                     out.add(item("fix", f.id(), "Punch fix · " + f.name(), f.day() + " · " + f.in() + "-" + f.out(), "today", f.createdAt()));
+            for (OvertimeStore.Claim c : director ? overtime.all() : overtime.forTeam(me))
+                if (c.status().equals("pending") && inScope.test(c.accountId()))
+                    out.add(item("overtime", c.id(), "Overtime claim · " + c.name(),
+                            c.day() + " · " + c.first() + "-" + c.last() + " · " + days(c.days()), "payroll", c.createdAt()));
             for (PayrollStore.Recommendation r : payroll.recommendations(acct))
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
                     out.add(item("recommendation", r.id(), "Payroll recommendation · " + r.name(),
@@ -120,6 +134,10 @@ public class NotificationRoutes implements Routes {
         ArrayNode arr = mapper.createArrayNode();
         out.forEach(arr::add);
         return arr;
+    }
+
+    private static String days(double d) {
+        return (d == Math.floor(d) ? String.valueOf((long) d) : String.valueOf(d)) + " day overtime";
     }
 
     private ObjectNode item(String kind, long id, String title, String detail, String tab, long at) {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Avatar, Empty, Icon, Modal, Stat, Toasts, call, fmtDuration } from './ui.jsx';
+import { MyOvertime, OT_RULE, OvertimeHistory, OvertimePanel, otDaysLabel, pendingOvertimeCount } from './overtime.jsx';
 
 const STATUS = {
   draft: { label: 'Draft', pill: 'warn' },
@@ -41,6 +42,7 @@ export function DaysDialog({ me, line, onClose }) {
   }, [me.token, line.month, line.accountId]);
 
   const short = days ? days.filter((d) => d.missedMin > 0) : [];
+  const ot = days ? days.filter((d) => d.otDays > 0) : [];
   return (
     <Modal title={line.name} eyebrow={`Attendance · ${monthLabel(line.month)}`} onClose={onClose}>
       {error && <div className="inline err">{error}</div>}
@@ -49,11 +51,12 @@ export function DaysDialog({ me, line, onClose }) {
           <span><b>{line.workingDays}</b> working days counted</span>
           <span><b>{short.length}</b> short</span>
           <span><b>{hrs(line.missedHours)}</b> missed</span>
+          {ot.length > 0 && <span><b>{otDaysLabel(line.overtimeDays)}</b> overtime on {ot.length} day{ot.length === 1 ? '' : 's'}</span>}
           {!line.linked && <span className="warn">Not linked to the device — no punches</span>}
         </div>
         <div className="table-wrap pay-days">
           <table className="leave-table">
-            <thead><tr><th>Day</th><th>Type</th><th>In</th><th>Out</th><th>Worked</th><th>Needed</th><th>Missed</th></tr></thead>
+            <thead><tr><th>Day</th><th>Type</th><th>In</th><th>Out</th><th>Worked</th><th>Needed</th><th>Missed</th><th>Overtime</th></tr></thead>
             <tbody>
               {days.map((d) => (
                 <tr key={d.date} className={`pay-day ${d.type} ${d.missedMin ? 'short' : ''}`}>
@@ -64,13 +67,15 @@ export function DaysDialog({ me, line, onClose }) {
                   <td className="mono">{d.spanMin ? fmtDuration(d.spanMin) : '—'}</td>
                   <td className="mono dim">{d.type === 'work' ? fmtDuration(d.requiredMin) : '—'}</td>
                   <td className="mono strong">{d.missedMin ? fmtDuration(d.missedMin) : '—'}</td>
+                  <td className="mono">{d.otDays ? <>{otDaysLabel(d.otDays)}<small className="sub">{fmtDuration(d.otMin)} over</small></> : '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <small className="dim">Needed is a 9 h first-to-last punch span (1 h lunch included), less any approved leave.
-          Up to 10 minutes short is forgiven; more is rounded up to the next half hour, at most 8 h a day.</small>
+        <small className="dim">Needed is an 8:30 h first-to-last punch span (lunch included), less any approved leave.
+          Up to 10 minutes short is forgiven; more is rounded up to the next half hour, at most 8 h a day.
+          Overtime shows only once approved. {OT_RULE}</small>
       </>)}
     </Modal>
   );
@@ -85,7 +90,8 @@ const CSV_COLS = [
   ['Correction note', (l) => l.correctionNote], ['Basic', (l) => l.basic], ['HRA', (l) => l.hra],
   ['Other allowance', (l) => l.otherAllowance], ['Monthly gross', (l) => l.fullGross],
   ['Gross this month', (l) => l.gross], ['Day rate', (l) => l.dayRate], ['Hour rate', (l) => l.hourRate],
-  ['Cut', (l) => l.cut], ['Net pay', (l) => l.net],
+  ['Cut', (l) => l.cut], ['Overtime days', (l) => l.overtimeDays], ['Overtime pay', (l) => l.overtimePay],
+  ['Net pay', (l) => l.net],
 ];
 const csvCell = (v) => {
   const s = String(v ?? '');
@@ -187,19 +193,20 @@ function PaidDialog({ me, month, onClose, onDone }) {
 /* ----------------------------------------------------------- run panel */
 
 /** Lines table for a month. editable = draft and director. */
-function LinesTable({ lines, editable, onDays, onCorrect }) {
+function LinesTable({ lines, editable, onDays, onCorrect, onPerson }) {
   if (!lines.length) return <Empty title="No payroll lines" hint="Give people a salary, then generate the month." />;
   return (
     <div className="table-wrap">
       <table className="leave-table">
         <thead>
-          <tr><th>Person</th><th>Working days</th><th>Missed</th><th>Correction</th><th>Gross</th><th>Cut</th><th>Net</th><th /></tr>
+          <tr><th>Person</th><th>Working days</th><th>Missed</th><th>Correction</th><th>Gross</th><th>Cut</th><th>Overtime</th><th>Net</th><th /></tr>
         </thead>
         <tbody>
           {lines.map((l) => (
             <tr key={l.accountId}>
               <td>
-                <div className="who"><Avatar label={l.name} /><span>{l.name}<small>{l.email}</small></span></div>
+                <button className="link who" title="Pay and overtime history" onClick={() => onPerson(l)}>
+                  <Avatar label={l.name} /><span>{l.name}<small>{l.email}</small></span></button>
                 {!l.linked && <small className="sub pay-flag">not linked to the device</small>}
               </td>
               <td className="mono">{l.workingDays}</td>
@@ -208,6 +215,8 @@ function LinesTable({ lines, editable, onDays, onCorrect }) {
                 <small className="sub reason" title={l.correctionNote}>{l.correctionNote}</small></> : <span className="dim">—</span>}</td>
               <td className="mono">{money(l.gross)}{l.gross < l.fullGross && <small className="sub">prorated of {money(l.fullGross)}</small>}</td>
               <td className="mono">{l.cut ? `− ${money(l.cut)}` : <span className="dim">—</span>}<small className="sub">{hrs(totalHours(l))} × {money(l.hourRate)}</small></td>
+              <td className="mono">{l.overtimePay ? <>+ {money(l.overtimePay)}<small className="sub">{otDaysLabel(l.overtimeDays)} × {money(l.dayRate)}</small></>
+                : <span className="dim">—</span>}</td>
               <td className="mono strong">{money(l.net)}</td>
               <td className="row-act">
                 <div className="leave-act">
@@ -223,7 +232,7 @@ function LinesTable({ lines, editable, onDays, onCorrect }) {
   );
 }
 
-function RunPanel({ me, isDirector, flash, setError }) {
+function RunPanel({ me, isDirector, flash, setError, onPerson }) {
   const [runs, setRuns] = useState([]);
   const [month, setMonth] = useState(prevMonth());
   const [lines, setLines] = useState([]);
@@ -299,13 +308,19 @@ function RunPanel({ me, isDirector, flash, setError }) {
         <Stat label="Gross" value={money(sum('gross'))} icon="money" foot="before cuts" />
         <Stat label="Cut for missed hours" value={money(sum('cut'))} accent={sum('cut') ? 'saffron' : ''} icon="clock"
               foot={`${hrs(lines.reduce((s, l) => s + totalHours(l), 0))} in total`} />
+        <Stat label="Overtime pay" value={money(sum('overtimePay'))} icon="bolt"
+              foot={`${otDaysLabel(sum('overtimeDays'))} approved`} />
         <Stat label="Net payout" value={money(sum('net'))} accent="cyan" icon="approve" foot={monthLabel(month)} />
       </div>
 
+      {isDirector && run?.overtimeChanged && (
+        <div className="inline pay-note">Overtime was approved after this draft was generated — regenerate to include it.</div>
+      )}
       {status === 'draft' && <div className="inline pay-note">Draft — numbers update each time you regenerate (new punches, leave or holidays). Corrections are kept.</div>}
       {!isDirector && !runs.length
         ? <Empty title="No finalized months yet" hint="Your team's pay shows here once a director finalizes a month. To put someone on payroll, use My team." />
-        : <LinesTable lines={lines} editable={isDirector && status === 'draft'} onDays={setDays} onCorrect={setCorrecting} />}
+        : <LinesTable lines={lines} editable={isDirector && status === 'draft'} onDays={setDays} onCorrect={setCorrecting}
+                      onPerson={onPerson} />}
     </section>
 
     {days && <DaysDialog me={me} line={days} onClose={() => setDays(null)} />}
@@ -976,6 +991,8 @@ export function OpsPayroll({ me, isDirector, people }) {
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
   const [waiting, setWaiting] = useState(0); // salary proposals waiting for a director
+  const [otWaiting, setOtWaiting] = useState(0); // overtime claims waiting on you
+  const [person, setPerson] = useState(null); // { accountId, name } for the history dialog
   const flash = useCallback((m) => { setNotice(m); setTimeout(() => setNotice(null), 5000); }, []);
   useEffect(() => {
     if (!isDirector) return;
@@ -983,9 +1000,12 @@ export function OpsPayroll({ me, isDirector, people }) {
       .then(([a, b]) => setWaiting([...(a.salaries || []), ...(b.recommendations || [])].filter((r) => r.status === 'pending').length))
       .catch(() => {});
   }, [isDirector, me.token]);
+  useEffect(() => {
+    call('GET', '/api/overtime/team', null, me.token).then((d) => setOtWaiting(pendingOvertimeCount(d.claims || [], me))).catch(() => {});
+  }, [me]);
   const sections = isDirector
-    ? [['run', 'Monthly payroll'], ['salaries', 'Salaries'], ['holidays', 'Holidays']]
-    : [['team', 'My team'], ['run', 'Monthly payroll']];
+    ? [['run', 'Monthly payroll'], ['overtime', 'Overtime'], ['salaries', 'Salaries'], ['holidays', 'Holidays']]
+    : [['team', 'My team'], ['run', 'Monthly payroll'], ['overtime', 'Overtime']];
 
   return (<>
     <Toasts notice={notice} error={error} onClose={() => setError(null)} />
@@ -993,16 +1013,67 @@ export function OpsPayroll({ me, isDirector, people }) {
       {sections.map(([k, label]) => (
         <button key={k} className={`role-pick ${section === k ? 'on' : ''}`} onClick={() => setSection(k)}>
           {label}{k === 'salaries' && waiting > 0 && <em className="nav-count">{waiting}</em>}
+          {k === 'overtime' && otWaiting > 0 && <em className="nav-count">{otWaiting}</em>}
         </button>
       ))}
     </div>
-    {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} />}
+    {section === 'run' && <RunPanel me={me} isDirector={isDirector} flash={flash} setError={setError} onPerson={setPerson} />}
+    {section === 'overtime' && <OvertimePanel me={me} flash={flash} setError={setError} onCount={setOtWaiting} onPerson={setPerson} />}
     {isDirector && section === 'salaries' && <SalariesPanel me={me} isDirector people={people} flash={flash}
                                                             setError={setError} onPending={setWaiting} />}
     {!isDirector && section === 'team' && <TeamPanel me={me} people={people} flash={flash} setError={setError} />}
     {isDirector && section === 'holidays' && <HolidaysPanel me={me} flash={flash} setError={setError} />}
     {!isDirector && section === 'run' && <p className="dim pay-foot">You see your reportees' pay once a director finalizes the month.</p>}
+    {person && <PersonPayDialog me={me} person={person} onClose={() => setPerson(null)} />}
   </>);
+}
+
+/**
+ * One person's payroll months and overtime. Directors see every month; managers their reportees'
+ * finalized months (the server scopes both).
+ */
+function PersonPayDialog({ me, person, onClose }) {
+  const [lines, setLines] = useState(null);
+  const [claims, setClaims] = useState(null);
+  const [days, setDays] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    call('GET', `/api/payroll/person/${person.accountId}`, null, me.token)
+      .then((d) => setLines(d.lines || [])).catch((e) => { setLines([]); setError(e.message); });
+    call('GET', `/api/overtime/person/${person.accountId}`, null, me.token)
+      .then((d) => setClaims(d.claims || [])).catch((e) => { setClaims([]); setError(e.message); });
+  }, [me.token, person.accountId]);
+  if (days) return <DaysDialog me={me} line={days} onClose={() => setDays(null)} />;
+
+  return (
+    <Modal title={person.name} eyebrow="Pay & overtime history" onClose={onClose}>
+      {error && <div className="inline err">{error}</div>}
+      <h4 className="pay-sub">Payroll months</h4>
+      {!lines ? <p className="muted">Loading…</p> : !lines.length ? <p className="dim">No payroll months to show.</p> : (
+        <div className="table-wrap pay-days">
+          <table className="leave-table">
+            <thead><tr><th>Month</th><th>Status</th><th>Days</th><th>Missed</th><th>Cut</th><th>Overtime</th><th>Net</th><th /></tr></thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.month}>
+                  <td className="mono">{monthLabel(l.month)}</td>
+                  <td><StatusPill status={l.status} /></td>
+                  <td className="mono">{l.workingDays}</td>
+                  <td className="mono">{hrs(totalHours(l))}</td>
+                  <td className="mono">{l.cut ? `− ${money(l.cut)}` : '—'}</td>
+                  <td className="mono">{l.overtimePay ? <>+ {money(l.overtimePay)}<small className="sub">{otDaysLabel(l.overtimeDays)}</small></> : '—'}</td>
+                  <td className="mono strong">{money(l.net)}</td>
+                  <td className="row-act"><button className="btn ghost small" onClick={() => setDays(l)}>Days</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <h4 className="pay-sub">Overtime</h4>
+      {!claims ? <p className="muted">Loading…</p> : <OvertimeHistory claims={claims} />}
+    </Modal>
+  );
 }
 
 /* ------------------------------------------------------------ payslips */
@@ -1028,6 +1099,8 @@ function Payslip({ p, onDays }) {
             <dt>Other allowance</dt><dd>{money(p.otherAllowance)}</dd>
             {prorated && <><dt>Joined mid-month</dt><dd>− {money(p.fullGross - p.gross)}</dd></>}
             <dt className="tot">Gross</dt><dd className="tot">{money(p.gross)}</dd>
+            {p.overtimePay > 0 && <><dt>Overtime · {otDaysLabel(p.overtimeDays)} × {money(p.dayRate)}</dt>
+              <dd>+ {money(p.overtimePay)}</dd></>}
           </dl>
         </section>
         <section>
@@ -1043,7 +1116,7 @@ function Payslip({ p, onDays }) {
       </div>
       <footer className="payslip-net"><span>Net pay</span><b>{money(p.net)}</b></footer>
       <small className="dim payslip-rule">Day rate = gross ÷ days in {monthLabel(p.month)} = {money(p.dayRate)}; hour rate = day rate ÷ 8.
-        Sundays, holidays and approved leave are paid.</small>
+        Sundays, holidays and approved leave are paid. {OT_RULE}</small>
       <div className="leave-act no-print">
         <button className="btn ghost small" onClick={() => onDays(p)}><Icon name="calendar" size={15} />Attendance</button>
         <button className="btn primary small" onClick={() => window.print()}><Icon name="log" size={15} />Print / save PDF</button>
@@ -1067,6 +1140,7 @@ export function EmployeePayslips({ me }) {
 
   return (<>
     <Toasts error={error} onClose={() => setError(null)} />
+    <MyOvertime me={me} />
     {!list ? <p className="muted">Loading…</p> : !list.length ? (
       <section className="panel"><Empty title="No payslips yet" hint="A payslip appears here once a director finalizes the month." /></section>
     ) : (<>
@@ -1074,6 +1148,7 @@ export function EmployeePayslips({ me }) {
         <Stat label="Latest net pay" value={money(list[0].net)} accent="cyan" icon="money" foot={monthLabel(list[0].month)} />
         <Stat label="Latest cut" value={money(list[0].cut)} accent={list[0].cut ? 'saffron' : ''} icon="clock"
               foot={`${hrs(totalHours(list[0]))} missed`} />
+        <Stat label="Latest overtime" value={money(list[0].overtimePay)} icon="bolt" foot={`${otDaysLabel(list[0].overtimeDays)} approved`} />
         <Stat label="Payslips" value={list.length} icon="log" foot="finalized months" />
       </div>
       <section className="panel">
