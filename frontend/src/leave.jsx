@@ -12,7 +12,8 @@ const HALF = { first: 'First half', second: 'Second half', late: 'Late arrival',
 /** Late arrival / early departure: a few hours of one day, counted as hours / 8. */
 const isShort = (h) => h === 'late' || h === 'early';
 const HOURS_PER_DAY = 8;
-const HOUR_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+// at most 3 h: 3.5 h or more is a half day (the backend refuses more, MAX_SHORT_HOURS)
+const HOUR_STEPS = [0.5, 1, 1.5, 2, 2.5, 3];
 const fmtHours = (h) => `${h} h`;
 /** Up to 2 decimals, no trailing zeros (0.3125 -> 0.31, 11.5 -> 11.5). */
 const num = (n) => Math.round(n * 100) / 100;
@@ -235,7 +236,8 @@ function LeaveForm({ me, balance, holidays = {}, onClose, onSaved }) {
             <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
               {HOUR_STEPS.map((h) => <option key={h} value={h}>{fmtHours(h)}</option>)}
             </select>
-            <small className="dim">Counted as {hours} ÷ {HOURS_PER_DAY} = {fmtDays(hours / HOURS_PER_DAY)} of {CATS[category].label.toLowerCase()} leave.</small>
+            <small className="dim">Counted as {hours} ÷ {HOURS_PER_DAY} = {fmtDays(hours / HOURS_PER_DAY)} of {CATS[category].label.toLowerCase()} leave.
+              3.5 hours or more? Choose {half === 'late' ? 'First half' : 'Second half'} instead.</small>
           </label>
         )}
 

@@ -126,8 +126,9 @@ directors and old pending/rejected sign-ups become `disabled`.
 
 **Leave (LTS):** Sundays and company holidays (the list a director keeps in
 Payroll → Holidays, also shown on the leave calendar) inside a range don't count; a half-day is 0.5. A
-**late arrival** or **early departure** is 0.5–4 hours of one date in
-half-hour steps, counted as hours ÷ 8 of a day. Every partial request (half-day,
+**late arrival** or **early departure** is 0.5–3 hours of one date in
+half-hour steps, counted as hours ÷ 8 of a day; 3.5 hours or more is a half day
+(first half for late, second half for early), so the API refuses more than 3. Every partial request (half-day,
 late, early) is a single date. Late and first half take the morning, early and
 second half the evening, so late + early on one day is fine but late + first
 half clashes. A request must fit in the yearly quota counting approved + pending
