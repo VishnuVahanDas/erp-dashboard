@@ -1,12 +1,10 @@
 package org.ajeet.web;
 
-import org.ajeet.attendance.AttendanceStore;
-import org.ajeet.attendance.PunchFixService;
+import org.ajeet.attendance.AttendanceService;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
-import org.ajeet.web.routes.AttendanceRoutes;
 import org.ajeet.web.routes.AuthRoutes;
 import org.ajeet.web.routes.LeaveRoutes;
 import org.ajeet.web.routes.OvertimeRoutes;
@@ -28,16 +26,17 @@ import java.util.List;
 class LegacyWiring {
 
     /** The old stores, opened together so their creation order (and so their tables') stays fixed. */
-    record LegacyStores(AttendanceStore attendance, AuthStore auth, LeaveStore leave,
+    record LegacyStores(AuthStore auth, LeaveStore leave,
                         PayrollStore payroll, OvertimeStore overtime) {}
 
+    /** attendance: created first (users / punches tables), as the old AttendanceStore always was. */
     @Bean
-    LegacyStores legacyStores(@Value("${spring.datasource.url}") String pgUrl,
+    LegacyStores legacyStores(AttendanceService attendance,
+                              @Value("${spring.datasource.url}") String pgUrl,
                               @Value("${spring.datasource.username}") String pgUser,
                               @Value("${spring.datasource.password}") String pgPass,
                               @Value("${ADMIN_EMAIL:}") String adminEmail,
                               @Value("${ADMIN_PASSWORD:}") String adminPassword) throws Exception {
-        AttendanceStore attendance = new AttendanceStore(pgUrl, pgUser, pgPass);
         System.out.println("Connected to PostgreSQL: " + pgUrl);
 
         AuthStore auth = new AuthStore(pgUrl, pgUser, pgPass);
@@ -54,10 +53,9 @@ class LegacyWiring {
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
         // after PayrollStore: overtime reads payroll_runs (and punch_fixes, created by PunchFixRepository)
         OvertimeStore overtime = new OvertimeStore(pgUrl, pgUser, pgPass);
-        return new LegacyStores(attendance, auth, leave, payroll, overtime);
+        return new LegacyStores(auth, leave, payroll, overtime);
     }
 
-    @Bean AttendanceStore attendanceStore(LegacyStores s) { return s.attendance(); }
     @Bean AuthStore authStore(LegacyStores s) { return s.auth(); }
     @Bean LeaveStore leaveStore(LegacyStores s) { return s.leave(); }
     @Bean PayrollStore payrollStore(LegacyStores s) { return s.payroll(); }
@@ -65,12 +63,11 @@ class LegacyWiring {
 
     /** Old route modules, asked in this order (the order the routes were always matched in). */
     @Bean
-    ApiServer legacyApi(LegacyStores s, PunchFixService punchFixes) {
+    ApiServer legacyApi(LegacyStores s, AttendanceService attendance) {
         Http http = new Http(s.auth());
         return new ApiServer(http, List.of(
                 new AuthRoutes(http, s.auth()),
-                new AttendanceRoutes(http, s.attendance(), s.auth(), punchFixes),
-                new PeopleRoutes(http, s.auth(), s.attendance()),
+                new PeopleRoutes(http, s.auth(), attendance),
                 new LeaveRoutes(http, s.leave(), s.auth()),
                 new PayrollRoutes(http, s.payroll()),
                 new OvertimeRoutes(http, s.overtime())));

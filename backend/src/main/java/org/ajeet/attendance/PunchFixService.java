@@ -71,7 +71,7 @@ public class PunchFixService {
      * enrolls = whose (null = everyone); day range optional. People not linked
      * to a device user are left out - they have no log.
      */
-    public List<AttendanceStore.AttendancePunch> approvedPunches(Collection<Integer> enrolls, LocalDate from,
+    public List<AttendanceService.AttendancePunch> approvedPunches(Collection<Integer> enrolls, LocalDate from,
                                                                 LocalDate toExclusive) {
         if (enrolls != null && enrolls.isEmpty()) return List.of();
         return repo.approvedPunches(enrolls, from, toExclusive);

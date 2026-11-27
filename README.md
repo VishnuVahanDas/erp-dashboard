@@ -21,10 +21,10 @@ web-dashboard/
 │       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
 │       ├── web/routes/*Routes.java         old REST routes, one class per module not ported yet (Auth,
-│       │                                   People, Attendance, Leave, Payroll, Overtime)
+│       │                                   People, Leave, Payroll, Overtime)
 │       ├── notify/NotificationController.java  the bell: /notifications (ported)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
-│       ├── attendance/AttendanceStore.java punches + device users (read side)
+│       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side (ported)
 │       ├── attendance/PunchFix{Controller,Service,Repository}.java  missed-punch requests and approved fixes (ported)
 │       ├── sync/SyncController.java        Spring controller: /status, device sync (ported)
 │       ├── sync/SyncRepository.java        "Sync device" queue + agent heartbeat
@@ -48,7 +48,8 @@ use the same names as before: process environment first, then `.env` (read as
 a properties file, so a value containing `\` needs it doubled).
 
 Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`), **Notifications**,
-**MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`).
+**MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`), **Attendance**
+(`/attendance/*`).
 Deliberate changes on ported endpoints: a request body that isn't valid JSON
 answers **400** `request body is not valid JSON` (it was a 500 with the
 parser's message); a query parameter given twice (`?as=a&as=b`) is read as

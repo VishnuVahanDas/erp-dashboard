@@ -28,10 +28,11 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Auth, Attendance, People,
-                                 Leave, Payroll, Overtime (Jackson 2)
+    web/routes/<Module>Routes    one per area still on the old style: Auth, People, Leave,
+                                 Payroll, Overtime (Jackson 2)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
-    attendance/AttendanceStore   punches + device users (read side)
+    attendance/Attendance{Controller,Service,Repository}  PORTED: /attendance/* punches + device users
+                                 (read side; creates the shared users/punches tables, before the other stores)
     attendance/PunchFix{Controller,Service,Repository}  PORTED: /punch-fixes/* missed-punch requests
                                  (own table; never writes punches); approvedPunches feeds the attendance views
     notify/NotificationController  PORTED: /notifications (the bell), reads the other stores

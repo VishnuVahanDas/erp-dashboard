@@ -67,7 +67,7 @@ class PunchFixRepository {
     }
 
     /** Approved fixes as two log entries each (out, then in), newest day first. enrolls null = everyone. */
-    List<AttendanceStore.AttendancePunch> approvedPunches(Collection<Integer> enrolls, LocalDate from, LocalDate toExclusive) {
+    List<AttendanceService.AttendancePunch> approvedPunches(Collection<Integer> enrolls, LocalDate from, LocalDate toExclusive) {
         StringBuilder sql = new StringBuilder("""
                 SELECT a.enroll_number, COALESCE(NULLIF(u.name,''), NULLIF(a.full_name,''), a.email),
                        f.day::text, to_char(f.in_time, 'HH24:MI:SS'), to_char(f.out_time, 'HH24:MI:SS'),
@@ -85,12 +85,12 @@ class PunchFixRepository {
         if (enrolls != null) q = q.param("enrolls", List.copyOf(enrolls));
         if (from != null) q = q.param("from", Date.valueOf(from));
         if (toExclusive != null) q = q.param("to", Date.valueOf(toExclusive));
-        List<AttendanceStore.AttendancePunch> out = new ArrayList<>();
+        List<AttendanceService.AttendancePunch> out = new ArrayList<>();
         q.query(rs -> {
             String day = rs.getString(3), by = rs.getString(6);
-            out.add(new AttendanceStore.AttendancePunch(rs.getInt(1), rs.getString(2),
+            out.add(new AttendanceService.AttendancePunch(rs.getInt(1), rs.getString(2),
                     day + " " + rs.getString(5), PunchFixService.FIX_LABEL, by));
-            out.add(new AttendanceStore.AttendancePunch(rs.getInt(1), rs.getString(2),
+            out.add(new AttendanceService.AttendancePunch(rs.getInt(1), rs.getString(2),
                     day + " " + rs.getString(4), PunchFixService.FIX_LABEL, by));
         });
         return out;

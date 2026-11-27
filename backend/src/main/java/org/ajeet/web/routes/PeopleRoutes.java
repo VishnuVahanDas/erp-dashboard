@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.attendance.AttendanceStore;
+import org.ajeet.attendance.AttendanceService;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.web.Http;
 
@@ -19,9 +19,9 @@ public class PeopleRoutes implements Routes {
     private final Http http;
     private final ObjectMapper mapper;
     private final AuthStore auth;
-    private final AttendanceStore attendance;
+    private final AttendanceService attendance;
 
-    public PeopleRoutes(Http http, AuthStore auth, AttendanceStore attendance) {
+    public PeopleRoutes(Http http, AuthStore auth, AttendanceService attendance) {
         this.http = http;
         this.mapper = http.mapper();
         this.auth = auth;
