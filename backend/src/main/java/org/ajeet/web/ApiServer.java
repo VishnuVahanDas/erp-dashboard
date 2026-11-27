@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import org.ajeet.auth.AuthService;
 import org.ajeet.overtime.OvertimeStore;
-import org.ajeet.payroll.PayrollStore;
 import org.ajeet.web.routes.Routes;
 
 import java.io.IOException;
@@ -46,7 +45,6 @@ public class ApiServer {
         } catch (AuthService.AuthException e) {
             http.send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (Http.ForbiddenException | Forbidden
-                 | PayrollStore.ForbiddenException
                  | OvertimeStore.ForbiddenException e) {
             http.send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {

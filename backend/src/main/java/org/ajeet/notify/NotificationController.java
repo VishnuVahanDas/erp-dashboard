@@ -6,7 +6,7 @@ import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveService;
 import org.ajeet.mbo.MboService;
 import org.ajeet.overtime.OvertimeStore;
-import org.ajeet.payroll.PayrollStore;
+import org.ajeet.payroll.PayrollService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Forbidden;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,11 +32,11 @@ class NotificationController {
     private final AuthService auth;
     private final LeaveService leave;
     private final MboService mbo;
-    private final PayrollStore payroll;
+    private final PayrollService payroll;
     private final PunchFixService punchFixes;
     private final OvertimeStore overtime;
 
-    NotificationController(AuthService auth, LeaveService leave, MboService mbo, PayrollStore payroll,
+    NotificationController(AuthService auth, LeaveService leave, MboService mbo, PayrollService payroll,
                            PunchFixService punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
@@ -110,11 +110,11 @@ class NotificationController {
                 if (c.status().equals("pending") && inScope.test(c.accountId()))
                     out.add(item("overtime", c.id(), "Overtime claim · " + c.name(),
                             c.day() + " · " + c.first() + "-" + c.last() + " · " + days(c.days()), "payroll", c.createdAt()));
-            for (PayrollStore.Recommendation r : payroll.recommendations(acct))
+            for (PayrollService.Recommendation r : payroll.recommendations(acct))
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
                     out.add(item("recommendation", r.id(), "Payroll recommendation · " + r.name(),
                             "by " + r.recommendedBy() + " — set a salary to approve", "payroll", r.createdAt()));
-            for (PayrollStore.Salary s : payroll.salaries(acct))
+            for (PayrollService.Salary s : payroll.salaries(acct))
                 if (s.status().equals("pending") && inScope.test(s.accountId()))
                     out.add(item("salary", s.id(), "Salary proposal · " + s.name(), "proposed by " + s.createdBy(), "payroll", s.createdAt()));
             for (MboService.MboThread t : director ? mbo.allExcept(me) : mbo.forTeam(me))

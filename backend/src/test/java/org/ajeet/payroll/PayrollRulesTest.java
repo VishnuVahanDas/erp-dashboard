@@ -12,7 +12,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The pay rules in PayrollStore.compute / missedMinutes. These pin today's
+ * The pay rules in PayrollRules.compute / missedMinutes (moved from PayrollStore). These pin today's
  * results so the Spring Boot move can't change anyone's pay unnoticed.
  * November 2026: 30 days, Sundays on the 1st, 8th, 15th, 22nd and 29th.
  */
@@ -25,32 +25,32 @@ class PayrollRulesTest {
 
     @Test
     void fullSpanMissesNothing() {
-        assertEquals(0, PayrollStore.missedMinutes(510, 510));
-        assertEquals(0, PayrollStore.missedMinutes(510, 600));
+        assertEquals(0, PayrollRules.missedMinutes(510, 510));
+        assertEquals(0, PayrollRules.missedMinutes(510, 600));
     }
 
     @Test
     void tenMinutesAreForgiven() {
-        assertEquals(0, PayrollStore.missedMinutes(510, 500));
+        assertEquals(0, PayrollRules.missedMinutes(510, 500));
     }
 
     @Test
     void moreThanGraceRoundsUpToTheHalfHour() {
-        assertEquals(30, PayrollStore.missedMinutes(510, 499)); // 11 min short
-        assertEquals(30, PayrollStore.missedMinutes(510, 480)); // 30 min short
-        assertEquals(60, PayrollStore.missedMinutes(510, 470)); // 40 min short
+        assertEquals(30, PayrollRules.missedMinutes(510, 499)); // 11 min short
+        assertEquals(30, PayrollRules.missedMinutes(510, 480)); // 30 min short
+        assertEquals(60, PayrollRules.missedMinutes(510, 470)); // 40 min short
     }
 
     @Test
     void anAbsentDayCostsAtMostEightHours() {
-        assertEquals(480, PayrollStore.missedMinutes(510, 0));
+        assertEquals(480, PayrollRules.missedMinutes(510, 0));
     }
 
     @Test
     void halfDayLeaveLowersTheRequiredSpan() {
-        assertEquals(0, PayrollStore.missedMinutes(240, 245));
-        assertEquals(30, PayrollStore.missedMinutes(240, 220)); // 20 min short
-        assertEquals(60, PayrollStore.missedMinutes(240, 200)); // 40 min short
+        assertEquals(0, PayrollRules.missedMinutes(240, 245));
+        assertEquals(30, PayrollRules.missedMinutes(240, 220)); // 20 min short
+        assertEquals(60, PayrollRules.missedMinutes(240, 200)); // 40 min short
     }
 
     // ------------------------------------------------------------------ compute
@@ -63,12 +63,12 @@ class PayrollRulesTest {
         spans.put(day(6), span(6, "09:00", "13:05"));   // half-day leave, 4:05 of 4:00 needed
         spans.remove(day(9));                           // full-day leave
 
-        Map<LocalDate, PayrollStore.Leave> leave = Map.of(
-                day(6), new PayrollStore.Leave(false, PayrollStore.SHIFT_MIN - PayrollStore.HALF_DAY_REQUIRED_MIN, "Personal leave (first half)"),
-                day(9), new PayrollStore.Leave(true, PayrollStore.SHIFT_MIN, "Sick leave"));
-        Map<LocalDate, PayrollStore.Overtime> ot = Map.of(day(10), new PayrollStore.Overtime(180, 0.5, "overtime 3:00 h"));
+        Map<LocalDate, PayrollRules.Leave> leave = Map.of(
+                day(6), new PayrollRules.Leave(false, PayrollRules.SHIFT_MIN - PayrollRules.HALF_DAY_REQUIRED_MIN, "Personal leave (first half)"),
+                day(9), new PayrollRules.Leave(true, PayrollRules.SHIFT_MIN, "Sick leave"));
+        Map<LocalDate, PayrollRules.Overtime> ot = Map.of(day(10), new PayrollRules.Overtime(180, 0.5, "overtime 3:00 h"));
 
-        PayrollStore.Computed c = PayrollStore.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
+        PayrollRules.Computed c = PayrollRules.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
                 Map.of(day(5), "Diwali"), leave, spans, Map.of(), ot, 0);
 
         // 25 Mon-Sat days, minus the holiday and the full leave day
@@ -97,7 +97,7 @@ class PayrollRulesTest {
 
     @Test
     void midMonthStartProratesGrossAndSkipsEarlierDays() {
-        PayrollStore.Computed c = PayrollStore.compute(NOV, GROSS, day(16), NOV.atEndOfMonth(),
+        PayrollRules.Computed c = PayrollRules.compute(NOV, GROSS, day(16), NOV.atEndOfMonth(),
                 Map.of(), Map.of(), fullSpans(day(16)), Map.of(), Map.of(), 0);
 
         assertEquals(15_000, c.gross(), 1e-9);      // 15 days at 1000
@@ -110,7 +110,7 @@ class PayrollRulesTest {
 
     @Test
     void directorCorrectionAddsToMissedHours() {
-        PayrollStore.Computed c = PayrollStore.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
+        PayrollRules.Computed c = PayrollRules.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
                 Map.of(), Map.of(), fullSpans(NOV.atDay(1)), Map.of(), Map.of(), 2);
         assertEquals(250, c.cut(), 1e-9);
         assertEquals(29_750, c.net(), 1e-9);
@@ -118,7 +118,7 @@ class PayrollRulesTest {
 
     @Test
     void daysAfterCountUntilAreNotCountedYet() {
-        PayrollStore.Computed c = PayrollStore.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), day(10),
+        PayrollRules.Computed c = PayrollRules.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), day(10),
                 Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), 0);
         assertEquals(8, c.workingDays());           // 2-7, 9, 10
         assertEquals(64, c.missedHours(), 1e-9);    // all absent: 8 x 8 h
@@ -127,9 +127,9 @@ class PayrollRulesTest {
 
     @Test
     void overtimeIsPaidOnASundayToo() {
-        PayrollStore.Computed c = PayrollStore.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
+        PayrollRules.Computed c = PayrollRules.compute(NOV, GROSS, LocalDate.of(2026, 10, 1), NOV.atEndOfMonth(),
                 Map.of(), Map.of(), fullSpans(NOV.atDay(1)),
-                Map.of(), Map.of(day(8), new PayrollStore.Overtime(420, 1, null)), 0);
+                Map.of(), Map.of(day(8), new PayrollRules.Overtime(420, 1, null)), 0);
         assertEquals(1, c.otDays(), 1e-9);
         assertEquals(31_000, c.net(), 1e-9);
         assertEquals("sunday", type(c, 8));
@@ -151,10 +151,10 @@ class PayrollRulesTest {
         return m;
     }
 
-    private static PayrollStore.Day dayOf(PayrollStore.Computed c, int d) {
-        List<PayrollStore.Day> days = c.days();
+    private static PayrollRules.Day dayOf(PayrollRules.Computed c, int d) {
+        List<PayrollRules.Day> days = c.days();
         return days.stream().filter(x -> x.date().equals(day(d).toString())).findFirst().orElseThrow();
     }
 
-    private static String type(PayrollStore.Computed c, int d) { return dayOf(c, d).type(); }
+    private static String type(PayrollRules.Computed c, int d) { return dayOf(c, d).type(); }
 }

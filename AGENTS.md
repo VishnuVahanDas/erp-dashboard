@@ -28,7 +28,7 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Payroll, Overtime (Jackson 2)
+    web/routes/<Module>Routes    one per area still on the old style: Overtime (Jackson 2)
     auth/AuthController          PORTED: /auth/* login, logout, me, own password
     auth/PeopleController        PORTED: /team, /people/* (directors manage everyone, managers add employees)
     auth/AuthService             accounts, roles, reporting lines, sessions, PBKDF2 passwords, first-director
@@ -47,9 +47,11 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
                                  manager per week, grouped by month, expire when the week ends)
     mbo/MboService               rules + @Transactional writes; the weekly limit is held by a lock on the pair
     mbo/MboRepository            SQL (JdbcClient) and its tables' DDL / migration at startup
-    payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
+    payroll/Payroll{Controller,Service,Repository}  PORTED: /payroll/* salaries, holidays, monthly runs;
+                                 run changes lock the month, salary changes the person
+    payroll/PayrollRules         the pay rules (compute, missedMinutes, SHIFT_MIN...): no database, unit-tested
     overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, counted
-                                 from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollStore.SHIFT_MIN
+                                 from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollRules.SHIFT_MIN
                                  = 8:30 h); payroll pays approved days
   src/test/java/org/ajeet/       unit tests for the pay, leave and overtime rules
 tools/parity/  API snapshot + diff, to prove a backend refactor changes no response
@@ -63,7 +65,7 @@ frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/overtime.jsx  overtime claims (employee, in Payslips) and Payroll → Overtime (approve / decline / grant)
   src/notify.jsx   notifications bell (GET /api/notifications)
   src/calendar.jsx  My calendar on the employee's My dashboard: holidays, leave and attendance per day;
-                 its day rules copy PayrollStore (SHIFT_MIN, HALF_DAY_REQUIRED_MIN, GRACE_MIN), so change both together
+                 its day rules copy PayrollRules (SHIFT_MIN, HALF_DAY_REQUIRED_MIN, GRACE_MIN), so change both together
   src/ui.jsx     shared components (Modal, Stat, Icon...) and date/time helpers
   src/App.css    all styles
 docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinned to vyom-erp
@@ -88,6 +90,8 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
   `@DependsOn("legacyStores")` while it references tables an old store creates).
   Where the old store relied on `synchronized` for a check-then-write, hold a
   lock in the transaction (`pg_advisory_xact_lock`, `SELECT ... FOR UPDATE`).
+  JSON stored in a column (payroll_lines.days) is read with a mapper that allows
+  missing numbers (Jackson 3 refuses them by default; old rows lack newer fields).
   Then remove the store and routes from `LegacyWiring`, delete them, and check:
   unit tests, parity diff, and the area's writes by hand for each role.
 - **Each module owns its tables.** Every `*Store` creates its own tables with

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Modal, call, fmtDuration, hhmm, minutesBetween, todayStr } from './ui.jsx';
 import { CATS, HALF, isShort, useHolidays } from './leave.jsx';
 
-// Mirrors PayrollStore: a working day needs an 8:30 h first-to-last span (10 minutes of grace);
+// Mirrors PayrollRules: a working day needs an 8:30 h first-to-last span (10 minutes of grace);
 // approved leave lowers it (half-day: 4 h left; late/early of X h: 8:30 h - X h; full day: nothing).
 const SHIFT_MIN = 8 * 60 + 30;
 const HALF_DAY_REQUIRED_MIN = 4 * 60;
@@ -33,7 +33,7 @@ const KIND = {
   none: { label: 'No attendance record', pill: 'idle' },
 };
 
-/** Minutes of the 8:30 h day one approved request covers (as PayrollStore.approvedLeave). */
+/** Minutes of the 8:30 h day one approved request covers (as PayrollRepository.approvedLeave). */
 function coveredMin(r) {
   if (!r.halfDay) return SHIFT_MIN;
   if (r.halfDay === 'first' || r.halfDay === 'second') return SHIFT_MIN - HALF_DAY_REQUIRED_MIN;

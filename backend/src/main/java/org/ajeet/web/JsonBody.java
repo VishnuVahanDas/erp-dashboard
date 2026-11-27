@@ -22,4 +22,16 @@ public class JsonBody {
     public JsonNode read(byte[] raw) {
         return raw == null || raw.length == 0 ? json.createObjectNode() : json.readTree(raw);
     }
+
+    /** A numeric body field, as Http.number: missing / null / blank = 0, a number or numeric text, else 400. */
+    public static double number(JsonNode b, String field) {
+        JsonNode v = b.get(field);
+        if (v == null || v.isNull() || (v.isString() && v.asString().isBlank())) return 0;
+        if (v.isNumber()) return v.asDouble();
+        try {
+            return Double.parseDouble(v.asString().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(field + " must be a number");
+        }
+    }
 }

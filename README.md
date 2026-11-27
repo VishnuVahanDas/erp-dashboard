@@ -20,7 +20,7 @@ web-dashboard/
 │       ├── web/LegacyBridgeController.java /api requests not yet on a Spring controller -> ApiServer
 │       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
-│       ├── web/routes/*Routes.java         old REST routes for the modules not ported yet (Payroll, Overtime)
+│       ├── web/routes/*Routes.java         old REST routes for the module not ported yet (Overtime)
 │       ├── notify/NotificationController.java  the bell: /notifications (ported)
 │       ├── auth/{Auth,People}Controller.java, AuthService.java, AuthRepository.java  accounts, roles, sessions (ported)
 │       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side (ported)
@@ -29,7 +29,8 @@ web-dashboard/
 │       ├── sync/SyncRepository.java        "Sync device" queue + agent heartbeat
 │       ├── leave/Leave{Controller,Service,Repository}.java  leave requests, approvals, company + personal yearly quotas (LTS, ported)
 │       ├── mbo/Mbo{Controller,Service,Repository}.java  weekly MBOs ("Objectives", 6 per manager per week): propose / acknowledge / deny / suggest, expiry (ported)
-│       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
+│       ├── payroll/Payroll{Controller,Service,Repository}.java  salaries, holidays, monthly payroll runs, payslips (ported)
+│       ├── payroll/PayrollRules.java       the pay rules (no database; unit-tested)
 │       └── overtime/OvertimeStore.java     overtime claims and approvals (quarter-day tiers)
 ├── tools/parity/        API snapshot + diff (see Testing)
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
@@ -48,7 +49,7 @@ a properties file, so a value containing `\` needs it doubled).
 
 Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`), **Notifications**,
 **MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`), **Attendance**
-(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`), **Leave** (`/leave/*`).
+(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`), **Leave** (`/leave/*`), **Payroll** (`/payroll/*`).
 Deliberate changes on ported endpoints: a request body that isn't valid JSON
 answers **400** `request body is not valid JSON` (it was a 500 with the
 parser's message); a query parameter given twice (`?as=a&as=b`) is read as
@@ -77,7 +78,7 @@ your database; without an agent the dashboard shows it as offline.
 ### Testing
 
 ```bash
-cd backend && ./mvnw -q test      # unit tests: pay (PayrollStore.compute), leave day counting, overtime bands
+cd backend && ./mvnw -q test      # unit tests: pay (PayrollRules.compute), leave day counting, overtime bands
 ```
 
 **API parity check** (for backend changes that must not change any response):

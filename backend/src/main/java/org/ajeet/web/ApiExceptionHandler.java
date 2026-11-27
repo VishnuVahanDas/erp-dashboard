@@ -2,7 +2,6 @@ package org.ajeet.web;
 
 import org.ajeet.auth.AuthService;
 import org.ajeet.overtime.OvertimeStore;
-import org.ajeet.payroll.PayrollStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -33,7 +32,6 @@ class ApiExceptionHandler {
     }
 
     @ExceptionHandler({Forbidden.class, Http.ForbiddenException.class,
-            PayrollStore.ForbiddenException.class,
             OvertimeStore.ForbiddenException.class})
     ResponseEntity<ApiError> forbidden(Exception e) {
         return error(403, e.getMessage());
