@@ -1,4 +1,4 @@
-# Vyom web dashboard backend: Java API server.
+# Vyom web dashboard backend: Spring Boot API server (target/vyom-erp.jar).
 # Device sync is not done here: punches arrive from the Windows sync agent
 # (sdk repo) writing into the same PostgreSQL.
 

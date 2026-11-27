@@ -5,6 +5,7 @@
 // the other accounts' data, so permission answers (403) are recorded too.
 //
 //   node tools/parity/snapshot.mjs <name>        e.g. old, spring
+//   PARITY_BASE_URL=http://localhost:8081 node tools/parity/snapshot.mjs spring
 //
 // Reads tools/parity/accounts.json (git-ignored, see accounts.example.json).
 // Writes tools/parity/out/<name>/ (git-ignored: it holds personal data).
@@ -22,7 +23,8 @@ if (!name || !/^[\w-]+$/.test(name)) {
 }
 
 const cfg = JSON.parse(await readFile(join(here, 'accounts.json'), 'utf8'));
-const base = (cfg.baseUrl || 'http://localhost:8088').replace(/\/$/, '') + '/api';
+// PARITY_BASE_URL overrides the file, e.g. to snapshot a backend run natively on another port
+const base = (process.env.PARITY_BASE_URL || cfg.baseUrl || 'http://localhost:8088').replace(/\/$/, '') + '/api';
 const outDir = join(here, 'out', name);
 
 async function get(path, token) {

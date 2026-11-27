@@ -12,11 +12,14 @@ frontend (React, nginx) ──/api──> backend (Java :8080) ──> PostgreSQ
 web-dashboard/
 ├── docker-compose.yml   db + backend + web (dev and VPS)
 ├── .env.example         copy to .env
-├── backend/             Java 24+, Maven wrapper -> target/vyom-erp.jar
+├── backend/             Java 25, Spring Boot 4.1, Maven wrapper -> target/vyom-erp.jar
+│   ├── src/main/resources/application.properties   settings (env vars, then .env)
 │   └── src/main/java/org/ajeet/
-│       ├── Main.java
-│       ├── web/ApiServer.java              HTTP server: CORS, dispatch, errors -> status codes
-│       ├── web/Http.java                   shared JSON / session / role helpers
+│       ├── ErpApplication.java             Spring Boot entry point
+│       ├── web/LegacyWiring.java           opens the stores, seeds the first director (migration step)
+│       ├── web/LegacyBridgeController.java /api requests not yet on a Spring controller -> ApiServer
+│       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
+│       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
 │       ├── web/routes/*Routes.java         REST routes, one class per module (Auth, People, Attendance,
 │       │                                   PunchFix, Leave, Mbo, Payroll, Overtime, Notification, Sync)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
@@ -26,21 +29,27 @@ web-dashboard/
 │       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
 │       ├── mbo/MboStore.java               weekly MBOs ("Objectives" in the UI, 6 per manager per week): propose / acknowledge / deny / suggest, expiry
 │       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
-│       ├── overtime/OvertimeStore.java     overtime claims and approvals (quarter-day tiers)
-│       └── config/Env.java                 env / .env lookup
+│       └── overtime/OvertimeStore.java     overtime claims and approvals (quarter-day tiers)
+├── tools/parity/        API snapshot + diff (see Testing)
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
 
 ## Development
 
-Needs **Docker Desktop**, **JDK 24+** and **Node 22**. Maven isn't needed — use
+Needs **Docker Desktop**, **JDK 25** and **Node 22**. Maven isn't needed — use
 the wrapper in `backend/`.
+
+The backend is being moved to **Spring Boot** step by step (branch
+`feat/spring-boot`). Spring Boot runs the server; areas not ported yet still
+answer through the original route classes, so the API is unchanged. Settings
+use the same names as before: process environment first, then `.env` (read as
+a properties file, so a value containing `\` needs it doubled).
 
 ```bash
 cp .env.example .env              # once
 docker compose up -d db           # PostgreSQL on localhost:5433
 
-cd backend && ./mvnw -q compile exec:java        # API on :8080 (reads ../.env)
+cd backend && ./mvnw -q spring-boot:run          # API on :8080 (reads ../.env); health: /actuator/health
 cd frontend && npm install && npm run dev        # UI on http://localhost:5173 (proxies /api)
 ```
 

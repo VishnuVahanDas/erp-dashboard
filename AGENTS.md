@@ -11,14 +11,20 @@ documents the API, roles, leave and MBO rules, and the database contract.
 ## Layout
 
 ```
-backend/   Java 24, Maven wrapper, no framework
+backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
+  src/main/resources/application.properties   settings: env vars, then ../.env or .env (same names as .env.example)
   src/main/java/org/ajeet/
-    Main.java                    builds the stores and the route modules, starts ApiServer
-    web/ApiServer.java           server setup, CORS, dispatch to the route modules, errors -> status codes
-    web/Http.java                shared helpers: ObjectMapper, send/readJson, session + role guards, query parsing
+    ErpApplication.java          Spring Boot entry point
+    web/WebConfig.java           CORS
+    web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores, seeds the director, lists
+                                 the route modules in their old match order (what Main used to do)
+    web/LegacyBridgeController   MIGRATION: /api/** that no Spring controller claims -> ApiServer
+    web/ServletExchange.java     MIGRATION: a servlet request seen as a JDK HttpExchange for the old routes
+    web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
+    web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area: Sync, Auth, Attendance, People, Leave, Mbo,
-                                 Notification, PunchFix, Payroll, Overtime (JDK com.sun.net.httpserver + Jackson)
+    web/routes/<Module>Routes    one per area still on the old style: Sync, Auth, Attendance, People,
+                                 Leave, Mbo, Notification, PunchFix, Payroll, Overtime (Jackson 2)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
@@ -30,7 +36,8 @@ backend/   Java 24, Maven wrapper, no framework
     overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, counted
                                  from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollStore.SHIFT_MIN
                                  = 8:30 h); payroll pays approved days
-    config/Env.java              env var / .env lookup
+  src/test/java/org/ajeet/       unit tests for the pay, leave and overtime rules
+tools/parity/  API snapshot + diff, to prove a backend refactor changes no response
 frontend/  React 19 + Vite 6, plain JSX, no router or state library
   src/App.jsx    shell, login, role dashboards, attendance views
   src/leave.jsx  leave module UI
@@ -49,6 +56,14 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
 
 ## How the code is built (follow these patterns)
 
+- **Spring Boot migration in progress** (branch `feat/spring-boot`, baseline tag
+  `pre-spring-boot`). Spring Boot runs the server; areas not yet ported still go
+  through `LegacyBridgeController` → `ApiServer` → `web/routes/*Routes` exactly
+  as before. Each area moves to a Spring controller, which takes priority over
+  the bridge automatically. Keep `/api` paths, JSON, status codes and error
+  messages identical: the `tools/parity` diff against the `old` snapshot must stay
+  empty. Don't add features in the old style meanwhile. The two notes below on
+  routes and dependencies describe the old style until the move is finished.
 - **Each module owns its tables.** Every `*Store` creates its own tables with
   `CREATE TABLE IF NOT EXISTS` (plus any idempotent `ALTER ... IF NOT EXISTS`
   migrations) at startup. There is no migration tool. Schema changes must be
@@ -57,14 +72,15 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
   dispatches.** Each module implements `Routes`, gets only the stores it needs
   through its constructor and uses `Http` for JSON and guards. Role checks
   happen in the route module before a store is called; SQL and business rules
-  stay in the `*Store` classes. `Main` lists the modules in the order they are
+  stay in the `*Store` classes. `LegacyWiring` lists the modules in the order they are
   asked, and inside a module the first matching branch wins, so put a specific
   path (`/leave/quotas/{id}`) where it can't be shadowed. A new feature usually
-  means a new `*Store` package, a new `*Routes` class, wiring both in `Main`,
+  means a new `*Store` package, a new `*Routes` class, wiring both in `LegacyWiring`,
   and a new `.jsx` module in the frontend.
-- **Keep dependencies minimal.** The backend uses only Jackson and the
-  PostgreSQL driver; the frontend only React. Don't add a framework or library
-  unless the user asks for one.
+- **Keep dependencies minimal.** The backend uses Spring Boot starters (webmvc,
+  jdbc, actuator), the PostgreSQL driver and, until the move is done, Jackson 2
+  for the old routes; the frontend only React. Don't add another framework or
+  library unless the user asks for one.
 - **Roles:** director, manager, employee (one person can hold several). A
   manager only sees people who report to them through `reporting_lines`. Every
   new endpoint must enforce this scoping on the server, not just in the UI.
@@ -98,7 +114,7 @@ are migrated.
 ```bash
 cp .env.example .env                              # once; never commit .env
 docker compose up -d db                           # PostgreSQL on localhost:5433
-cd backend && ./mvnw -q compile exec:java         # API on :8080
+cd backend && ./mvnw -q spring-boot:run           # API on :8080 (reads ../.env)
 cd frontend && npm install && npm run dev         # UI on :5173, proxies /api
 docker compose up -d --build                      # full stack as in production -> :8088
 ```
@@ -109,7 +125,7 @@ Before committing:
   same commit, and say why in the message.
 - `cd backend && ./mvnw -q -DskipTests package` must succeed.
 - `cd frontend && npm run build` must succeed.
-- No local JDK 24 / Node? `docker compose build backend web` runs the same
+- No local JDK 25 / Node? `docker compose build backend web` runs the same
   Maven and Vite builds inside the images.
 - For behaviour changes, run the app and check the affected flow for each role
   it touches (director / manager / employee).

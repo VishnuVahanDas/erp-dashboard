@@ -1,16 +1,13 @@
-package org.ajeet;
+package org.ajeet.web;
 
 import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
-import org.ajeet.config.Env;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.sync.SyncRequests;
-import org.ajeet.web.ApiServer;
-import org.ajeet.web.Http;
 import org.ajeet.web.routes.AttendanceRoutes;
 import org.ajeet.web.routes.AuthRoutes;
 import org.ajeet.web.routes.LeaveRoutes;
@@ -20,29 +17,33 @@ import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.ajeet.web.routes.PeopleRoutes;
 import org.ajeet.web.routes.PunchFixRoutes;
-import org.ajeet.web.routes.Routes;
 import org.ajeet.web.routes.SyncRoutes;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
 
-/** Web dashboard backend: REST API for the React UI, backed by PostgreSQL. */
-public class Main {
+/**
+ * What Main used to do: open the stores (each creates its own tables, in this order because of the
+ * foreign keys between them), seed the first director and list the route modules in the order they
+ * were always matched. Each ported area takes its store and routes out of here.
+ */
+@Configuration
+class LegacyWiring {
 
-    public static void main(String[] args) throws Exception {
-        int port = Integer.parseInt(Env.get("PORT", "8080"));
-        String pgUrl = Env.get("PG_URL", null);
-        if (pgUrl == null || pgUrl.isBlank())
-            throw new IllegalStateException("PG_URL is required (see .env.example)");
-        String pgUser = Env.get("PG_USER", "postgres");
-        String pgPass = Env.get("PG_PASSWORD", "");
-
+    @Bean
+    ApiServer legacyApi(@Value("${spring.datasource.url}") String pgUrl,
+                        @Value("${spring.datasource.username}") String pgUser,
+                        @Value("${spring.datasource.password}") String pgPass,
+                        @Value("${ADMIN_EMAIL:}") String adminEmail,
+                        @Value("${ADMIN_PASSWORD:}") String adminPassword) throws Exception {
         AttendanceStore attendance = new AttendanceStore(pgUrl, pgUser, pgPass);
-        System.out.println("Connected to PostgreSQL: " + pgUrl);
+        System.out.println("Connected to PostgreSQL: " + pgUrl + " (" + attendance.describe() + ")");
 
         AuthStore auth = new AuthStore(pgUrl, pgUser, pgPass);
-        String adminEmail = Env.get("ADMIN_EMAIL", null);
-        if (adminEmail != null && !adminEmail.isBlank()) {
-            auth.seedDirector(adminEmail, Env.get("ADMIN_PASSWORD", ""));
+        if (!adminEmail.isBlank()) {
+            auth.seedDirector(adminEmail, adminPassword);
             System.out.println("Director account ready: " + adminEmail);
         } else {
             System.out.println("ADMIN_EMAIL not set -> no director seeded (set it in .env)");
@@ -61,7 +62,7 @@ public class Main {
 
         // route modules, asked in this order (the order the routes were always matched in)
         Http http = new Http(auth);
-        List<Routes> routes = List.of(
+        return new ApiServer(http, List.of(
                 new SyncRoutes(http, attendance, sync),
                 new AuthRoutes(http, auth),
                 new AttendanceRoutes(http, attendance, auth, punchFixes),
@@ -71,7 +72,6 @@ public class Main {
                 new NotificationRoutes(http, auth, leave, mbo, payroll, punchFixes, overtime),
                 new PunchFixRoutes(http, punchFixes),
                 new PayrollRoutes(http, payroll),
-                new OvertimeRoutes(http, overtime));
-        new ApiServer(http, routes, attendance.describe()).start(port);
+                new OvertimeRoutes(http, overtime)));
     }
 }
