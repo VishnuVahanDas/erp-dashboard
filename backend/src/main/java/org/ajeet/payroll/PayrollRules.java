@@ -22,7 +22,7 @@ import java.util.Map;
  * at 8 h (an absent day costs one day's pay); up to 10 minutes is forgiven,
  * anything more is rounded up to the next half hour. Cut = hour rate *
  * (missed + director's correction). Approved overtime (quarter days for whole
- * hours past a 9:00 h span, see OvertimeStore) adds day rate * overtime days:
+ * hours past a 9:00 h span, see OvertimeService) adds day rate * overtime days:
  * net = gross - cut + overtime.
  */
 public final class PayrollRules {

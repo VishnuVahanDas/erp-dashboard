@@ -11,10 +11,10 @@ import java.util.Map;
 
 /**
  * SQL for MBOs (tables mbo_threads, mbo_entries). Creates and migrates its tables at startup,
- * idempotently, as MboStore did. After the old stores: the tables reference accounts.
+ * idempotently, as MboStore did. After accounts: the tables reference them.
  */
 @Repository
-@DependsOn("legacyStores")
+@DependsOn("authRepository")
 class MboRepository {
 
     private final JdbcClient db;

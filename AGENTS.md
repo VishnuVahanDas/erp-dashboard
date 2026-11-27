@@ -27,8 +27,7 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ServletExchange.java     MIGRATION: a servlet request seen as a JDK HttpExchange for the old routes
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
-    web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Overtime (Jackson 2)
+    web/routes/Routes.java       (empty: every area is ported; removed with the bridge next)
     auth/AuthController          PORTED: /auth/* login, logout, me, own password
     auth/PeopleController        PORTED: /team, /people/* (directors manage everyone, managers add employees)
     auth/AuthService             accounts, roles, reporting lines, sessions, PBKDF2 passwords, first-director
@@ -50,9 +49,9 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     payroll/Payroll{Controller,Service,Repository}  PORTED: /payroll/* salaries, holidays, monthly runs;
                                  run changes lock the month, salary changes the person
     payroll/PayrollRules         the pay rules (compute, missedMinutes, SHIFT_MIN...): no database, unit-tested
-    overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, counted
-                                 from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollRules.SHIFT_MIN
-                                 = 8:30 h); payroll pays approved days
+    overtime/Overtime{Controller,Service,Repository}  PORTED: /overtime/* claims (own table); tier rule in
+                                 OvertimeService.otDays, counted from a 9:00 h span (OT_START_MIN; a full day for
+                                 cuts is PayrollRules.SHIFT_MIN = 8:30 h); payroll pays approved days
   src/test/java/org/ajeet/       unit tests for the pay, leave and overtime rules
 tools/parity/  API snapshot + diff, to prove a backend refactor changes no response
 frontend/  React 19 + Vite 6, plain JSX, no router or state library

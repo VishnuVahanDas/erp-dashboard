@@ -14,11 +14,11 @@ import java.util.List;
 
 /**
  * SQL for missed-punch requests (table punch_fixes; never writes punches, which belong to the sync
- * agent). Creates its table at startup, as PunchFixStore did. After the old stores: it references
+ * agent). Creates its table at startup, as PunchFixStore did. After accounts: it references
  * accounts.
  */
 @Repository
-@DependsOn("legacyStores")
+@DependsOn("authRepository")
 class PunchFixRepository {
 
     private final JdbcClient db;

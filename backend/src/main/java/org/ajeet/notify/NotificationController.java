@@ -5,7 +5,7 @@ import org.ajeet.attendance.PunchFixService;
 import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveService;
 import org.ajeet.mbo.MboService;
-import org.ajeet.overtime.OvertimeStore;
+import org.ajeet.overtime.OvertimeService;
 import org.ajeet.payroll.PayrollService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Forbidden;
@@ -34,10 +34,10 @@ class NotificationController {
     private final MboService mbo;
     private final PayrollService payroll;
     private final PunchFixService punchFixes;
-    private final OvertimeStore overtime;
+    private final OvertimeService overtime;
 
     NotificationController(AuthService auth, LeaveService leave, MboService mbo, PayrollService payroll,
-                           PunchFixService punchFixes, OvertimeStore overtime) {
+                           PunchFixService punchFixes, OvertimeService overtime) {
         this.auth = auth;
         this.leave = leave;
         this.mbo = mbo;
@@ -86,7 +86,7 @@ class NotificationController {
                             f.day() + " · by " + f.decidedBy()
                                     + (f.decisionNote() == null || f.decisionNote().isBlank() ? "" : " - \"" + f.decisionNote() + "\""),
                             "log", f.decidedAt()));
-            for (OvertimeStore.Claim c : overtime.mine(me))
+            for (OvertimeService.Claim c : overtime.mine(me))
                 if (c.selfRequested() && c.decidedAt() != null && c.decidedAt() > weekAgo && !c.status().equals("cancelled"))
                     out.add(item("overtime-decided", c.id(),
                             "Overtime " + (c.status().equals("rejected") ? "declined" : c.status()),
@@ -106,7 +106,7 @@ class NotificationController {
             for (PunchFixService.PunchFix f : director ? punchFixes.all() : punchFixes.forTeam(me))
                 if (f.status().equals("pending") && inScope.test(f.accountId()))
                     out.add(item("fix", f.id(), "Punch fix · " + f.name(), f.day() + " · " + f.in() + "-" + f.out(), "today", f.createdAt()));
-            for (OvertimeStore.Claim c : director ? overtime.all() : overtime.forTeam(me))
+            for (OvertimeService.Claim c : director ? overtime.all() : overtime.forTeam(me))
                 if (c.status().equals("pending") && inScope.test(c.accountId()))
                     out.add(item("overtime", c.id(), "Overtime claim · " + c.name(),
                             c.day() + " · " + c.first() + "-" + c.last() + " · " + days(c.days()), "payroll", c.createdAt()));
