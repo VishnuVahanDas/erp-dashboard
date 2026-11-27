@@ -1,6 +1,6 @@
 package org.ajeet.web;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -12,9 +12,9 @@ import java.util.List;
 @Configuration
 class WebConfig implements WebMvcConfigurer {
 
-    private final AuthStore auth;
+    private final AuthService auth;
 
-    WebConfig(AuthStore auth) {
+    WebConfig(AuthService auth) {
         this.auth = auth;
     }
 

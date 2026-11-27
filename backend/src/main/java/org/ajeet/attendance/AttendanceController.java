@@ -1,6 +1,6 @@
 package org.ajeet.attendance;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Forbidden;
 import org.ajeet.web.Guard;
@@ -26,9 +26,9 @@ class AttendanceController {
 
     private final AttendanceService attendance;
     private final PunchFixService punchFixes;
-    private final AuthStore auth;
+    private final AuthService auth;
 
-    AttendanceController(AttendanceService attendance, PunchFixService punchFixes, AuthStore auth) {
+    AttendanceController(AttendanceService attendance, PunchFixService punchFixes, AuthService auth) {
         this.attendance = attendance;
         this.punchFixes = punchFixes;
         this.auth = auth;
@@ -39,7 +39,7 @@ class AttendanceController {
     record PersonMonth(String month, boolean linked, List<AttendanceService.AttendancePunch> punches) {}
 
     @GetMapping("/my")
-    Punches my(@CurrentAccount AuthStore.Account me) {
+    Punches my(@CurrentAccount AuthService.Account me) {
         if (me.enrollNumber() == null)
             throw new Forbidden("your account isn't linked to a device user yet - ask a director");
         return new Punches(withFixes(attendance.punchesFor(me.enrollNumber()),
@@ -48,9 +48,9 @@ class AttendanceController {
 
     /** ?range=today, or ?date=YYYY-MM-DD for one day; otherwise the newest 500. */
     @GetMapping("/team")
-    Punches team(@CurrentAccount AuthStore.Account me, @RequestParam(required = false) String range,
+    Punches team(@CurrentAccount AuthService.Account me, @RequestParam(required = false) String range,
                  @RequestParam(required = false) String date) throws IOException {
-        Guard.requireRole(me, AuthStore.MANAGER);
+        Guard.requireRole(me, AuthService.MANAGER);
         boolean today = "today".equals(range);
         Set<Integer> enrolls = auth.teamEnrolls(me.id());
         LocalDate day = date(date);
@@ -62,14 +62,14 @@ class AttendanceController {
 
     /** One person's month for the People details: directors anyone, managers their reportees. */
     @GetMapping("/person/{id:\\d+}")
-    PersonMonth person(@CurrentAccount AuthStore.Account me, @PathVariable String id,
+    PersonMonth person(@CurrentAccount AuthService.Account me, @PathVariable String id,
                        @RequestParam(required = false) String month) throws IOException {
-        Guard.requireAnyRole(me, AuthStore.DIRECTOR, AuthStore.MANAGER);
+        Guard.requireAnyRole(me, AuthService.DIRECTOR, AuthService.MANAGER);
         long personId = Long.parseLong(id);
-        if (!me.has(AuthStore.DIRECTOR)
+        if (!me.has(AuthService.DIRECTOR)
                 && auth.team(me.id()).stream().noneMatch(m -> m.id() == personId && personId != me.id()))
             throw new Forbidden("you can only see attendance for people who report to you");
-        AuthStore.Account person = auth.account(personId);
+        AuthService.Account person = auth.account(personId);
         if (person == null) throw new IllegalArgumentException("person not found");
         YearMonth ym;
         try {
@@ -84,15 +84,15 @@ class AttendanceController {
     }
 
     @GetMapping("/today")
-    Punches today(@CurrentAccount AuthStore.Account me) {
-        Guard.requireRole(me, AuthStore.DIRECTOR);
+    Punches today(@CurrentAccount AuthService.Account me) {
+        Guard.requireRole(me, AuthService.DIRECTOR);
         return new Punches(attendance.punchesToday());
     }
 
     /** ?date=YYYY-MM-DD for one day; otherwise the newest 500. */
     @GetMapping("/all")
-    Punches all(@CurrentAccount AuthStore.Account me, @RequestParam(required = false) String date) {
-        Guard.requireRole(me, AuthStore.DIRECTOR);
+    Punches all(@CurrentAccount AuthService.Account me, @RequestParam(required = false) String date) {
+        Guard.requireRole(me, AuthService.DIRECTOR);
         LocalDate day = date(date);
         return new Punches(withFixes(attendance.punchesAll(day),
                 punchFixes.approvedPunches(null, day, day == null ? null : day.plusDays(1))));

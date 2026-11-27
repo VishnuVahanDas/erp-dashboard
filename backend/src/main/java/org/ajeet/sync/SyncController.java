@@ -1,6 +1,6 @@
 package org.ajeet.sync;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Guard;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,9 +42,9 @@ class SyncController {
 
     /** Body: optional {"since": "ISO-local-datetime"}; any content type, as before. */
     @PostMapping("/sync")
-    ResponseEntity<Map<String, Object>> sync(@CurrentAccount AuthStore.Account me,
+    ResponseEntity<Map<String, Object>> sync(@CurrentAccount AuthService.Account me,
                                              @RequestBody(required = false) byte[] body) throws Exception {
-        Guard.requireRole(me, AuthStore.DIRECTOR);
+        Guard.requireRole(me, AuthService.DIRECTOR);
         LocalDateTime since = readSince(body);
 
         SyncRepository.AgentStatus agent = sync.status();
@@ -81,8 +81,8 @@ class SyncController {
     }
 
     @GetMapping("/sync/status")
-    Map<String, Object> syncStatus(@CurrentAccount AuthStore.Account me) throws Exception {
-        Guard.requireRole(me, AuthStore.DIRECTOR);
+    Map<String, Object> syncStatus(@CurrentAccount AuthService.Account me) throws Exception {
+        Guard.requireRole(me, AuthService.DIRECTOR);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("mode", "agent");
         SyncRepository.AgentStatus a = sync.status();

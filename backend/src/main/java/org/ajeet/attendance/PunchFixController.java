@@ -1,6 +1,6 @@
 package org.ajeet.attendance;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Guard;
 import org.ajeet.web.JsonBody;
@@ -33,25 +33,25 @@ class PunchFixController {
     }
 
     @GetMapping("/my")
-    Map<String, List<PunchFixService.PunchFix>> my(@CurrentAccount AuthStore.Account me) {
+    Map<String, List<PunchFixService.PunchFix>> my(@CurrentAccount AuthService.Account me) {
         return Map.of("fixes", fixes.mine(me.id()));
     }
 
     /** Own past days with an in but no out (or the reverse) and no fix asked for yet. */
     @GetMapping("/missing")
-    Map<String, List<PunchFixService.MissingDay>> missing(@CurrentAccount AuthStore.Account me) {
+    Map<String, List<PunchFixService.MissingDay>> missing(@CurrentAccount AuthService.Account me) {
         return Map.of("days", fixes.missingDays(me.id(), me.enrollNumber()));
     }
 
     @GetMapping("/team")
-    Map<String, List<PunchFixService.PunchFix>> team(@CurrentAccount AuthStore.Account me) {
-        Guard.requireAnyRole(me, AuthStore.DIRECTOR, AuthStore.MANAGER);
-        return Map.of("fixes", me.has(AuthStore.DIRECTOR) ? fixes.all() : fixes.forTeam(me.id()));
+    Map<String, List<PunchFixService.PunchFix>> team(@CurrentAccount AuthService.Account me) {
+        Guard.requireAnyRole(me, AuthService.DIRECTOR, AuthService.MANAGER);
+        return Map.of("fixes", me.has(AuthService.DIRECTOR) ? fixes.all() : fixes.forTeam(me.id()));
     }
 
     /** {day, in, out, reason}. */
     @PostMapping
-    ResponseEntity<Map<String, Object>> request(@CurrentAccount AuthStore.Account me,
+    ResponseEntity<Map<String, Object>> request(@CurrentAccount AuthService.Account me,
                                                 @RequestBody(required = false) byte[] raw) {
         JsonNode b = json.read(raw);
         long id = fixes.request(me, b.path("day").asString(""), b.path("in").asString(""),
@@ -61,7 +61,7 @@ class PunchFixController {
 
     /** approve / reject: {note} (required to reject); cancel: the requester, no body. */
     @PostMapping("/{id:[0-9]+}/{action:approve|reject|cancel}")
-    Map<String, Boolean> decide(@CurrentAccount AuthStore.Account me, @PathVariable String id,
+    Map<String, Boolean> decide(@CurrentAccount AuthService.Account me, @PathVariable String id,
                                 @PathVariable String action, @RequestBody(required = false) byte[] raw) {
         long fixId = Long.parseLong(id);
         if (action.equals("cancel")) fixes.cancel(me, fixId);

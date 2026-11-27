@@ -1,6 +1,6 @@
 package org.ajeet.leave;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -202,7 +202,7 @@ public class LeaveStore {
      * yearly days per category; a null value goes back to the company default.
      * Categories not in the map are left as they are. Never your own quota.
      */
-    public synchronized void setPersonQuotas(AuthStore.Account who, long accountId, Map<String, Double> in) throws IOException {
+    public synchronized void setPersonQuotas(AuthService.Account who, long accountId, Map<String, Double> in) throws IOException {
         if (accountId == who.id()) throw new ForbiddenException("you can't set your own leave quota");
         if (!canManage(who, accountId))
             throw new ForbiddenException("only a director or this person's manager can set their leave quota");
@@ -242,7 +242,7 @@ public class LeaveStore {
 
     // ---------------------------------------------------------------- writes
 
-    public synchronized long apply(AuthStore.Account who, LeaveInput in) throws IOException {
+    public synchronized long apply(AuthService.Account who, LeaveInput in) throws IOException {
         String category = in.category() == null ? "" : in.category().trim().toLowerCase();
         if (!CATEGORIES.contains(category))
             throw new IllegalArgumentException("category must be personal or sick");
@@ -302,7 +302,7 @@ public class LeaveStore {
     }
 
     /** Approve or reject a pending request. First decision wins. */
-    public synchronized void decide(AuthStore.Account who, long id, boolean approve, String note) throws IOException {
+    public synchronized void decide(AuthService.Account who, long id, boolean approve, String note) throws IOException {
         LeaveRequest r = require(id);
         if (r.accountId() == who.id()) throw new ForbiddenException("you can't decide your own leave request");
         if (!canManage(who, r.accountId()))
@@ -337,7 +337,7 @@ public class LeaveStore {
      * Owner: pending, or approved and not yet started. Approver (manager of
      * the employee, or director): any pending/approved request.
      */
-    public synchronized void cancel(AuthStore.Account who, long id) throws IOException {
+    public synchronized void cancel(AuthService.Account who, long id) throws IOException {
         LeaveRequest r = require(id);
         if (!r.status().equals("pending") && !r.status().equals("approved"))
             throw new IllegalArgumentException("this request is already " + r.status());
@@ -510,9 +510,9 @@ public class LeaveStore {
         }
     }
 
-    private boolean canManage(AuthStore.Account who, long employeeId) throws IOException {
-        if (who.has(AuthStore.DIRECTOR)) return true;
-        if (!who.has(AuthStore.MANAGER)) return false;
+    private boolean canManage(AuthService.Account who, long employeeId) throws IOException {
+        if (who.has(AuthService.DIRECTOR)) return true;
+        if (!who.has(AuthService.MANAGER)) return false;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT 1 FROM reporting_lines WHERE employee_id = ? AND manager_id = ? LIMIT 1")) {
             ps.setLong(1, employeeId);

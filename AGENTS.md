@@ -21,16 +21,19 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ApiExceptionHandler      controller errors -> 401 / 403 / 400 / 500 with {"error": ...}
     web/Forbidden.java           unchecked 403 for ported services and guards
     web/JsonBody.java            reads a request body like the old Http.readJson (any type, empty = {})
-    web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores, seeds the director, lists
+    web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores (after attendance + accounts), lists
                                  the route modules in their old match order (what Main used to do)
     web/LegacyBridgeController   MIGRATION: /api/** that no Spring controller claims -> ApiServer
     web/ServletExchange.java     MIGRATION: a servlet request seen as a JDK HttpExchange for the old routes
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Auth, People, Leave,
-                                 Payroll, Overtime (Jackson 2)
-    auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
+    web/routes/<Module>Routes    one per area still on the old style: Leave, Payroll, Overtime (Jackson 2)
+    auth/AuthController          PORTED: /auth/* login, logout, me, own password
+    auth/PeopleController        PORTED: /team, /people/* (directors manage everyone, managers add employees)
+    auth/AuthService             accounts, roles, reporting lines, sessions, PBKDF2 passwords, first-director
+                                 seed; people changes run one at a time (last-director + device-link rules)
+    auth/AuthRepository          its SQL and tables (accounts, account_roles, reporting_lines, sessions)
     attendance/Attendance{Controller,Service,Repository}  PORTED: /attendance/* punches + device users
                                  (read side; creates the shared users/punches tables, before the other stores)
     attendance/PunchFix{Controller,Service,Repository}  PORTED: /punch-fixes/* missed-punch requests
@@ -106,7 +109,7 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
 - **Roles:** director, manager, employee (one person can hold several). A
   manager only sees people who report to them through `reporting_lines`. Every
   new endpoint must enforce this scoping on the server, not just in the UI.
-  Directors report to nobody: `AuthStore` refuses reporting lines for a
+  Directors report to nobody: `AuthService` refuses reporting lines for a
   director and clears them when someone becomes one.
 - **Audit trails are append-only.** MBO entries are never edited or deleted,
   and leave decisions record who decided and when. Keep it that way.
@@ -164,7 +167,7 @@ Before committing:
 - **Never commit `.env`.** Only `.env.example` is tracked. Add new settings
   there with a safe placeholder and document them in the README.
 - Don't commit `backend/target/`, `frontend/dist/` or `node_modules/`.
-- Passwords are PBKDF2-hashed in `AuthStore`. Never log or return password
+- Passwords are PBKDF2-hashed in `AuthService`. Never log or return password
   hashes or session tokens from the API.
 
 ## Git workflow

@@ -1,6 +1,6 @@
 package org.ajeet.overtime;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -133,9 +133,9 @@ public class OvertimeStore {
     }
 
     /** One person's claims: themselves, a director, or one of their managers. */
-    public synchronized List<Claim> forPerson(AuthStore.Account who, long accountId) throws IOException {
-        if (accountId != who.id() && !who.has(AuthStore.DIRECTOR)
-                && !(who.has(AuthStore.MANAGER) && reportsTo(accountId, who.id())))
+    public synchronized List<Claim> forPerson(AuthService.Account who, long accountId) throws IOException {
+        if (accountId != who.id() && !who.has(AuthService.DIRECTOR)
+                && !(who.has(AuthService.MANAGER) && reportsTo(accountId, who.id())))
             throw new ForbiddenException("you can't see this person's overtime");
         return claims("o.account_id = ?", accountId);
     }
@@ -146,8 +146,8 @@ public class OvertimeStore {
     }
 
     /** Unclaimed overtime of the people this approver can decide for (never their own). */
-    public synchronized List<Available> availableForTeam(AuthStore.Account who) throws IOException {
-        if (who.has(AuthStore.DIRECTOR)) return available("a.id <> ?", who.id());
+    public synchronized List<Available> availableForTeam(AuthService.Account who) throws IOException {
+        if (who.has(AuthService.DIRECTOR)) return available("a.id <> ?", who.id());
         return available("""
                 a.id <> ? AND a.id IN (SELECT employee_id FROM reporting_lines WHERE manager_id = ?)""",
                 who.id(), who.id());
@@ -156,7 +156,7 @@ public class OvertimeStore {
     // ---------------------------------------------------------------- writes
 
     /** The employee claims one past day; the overtime is worked out from their punches. */
-    public synchronized long request(AuthStore.Account who, String day, String reason) throws IOException {
+    public synchronized long request(AuthService.Account who, String day, String reason) throws IOException {
         LocalDate d = pastDay(day);
         String r = note(reason, "reason");
         requireOpenMonth(d);
@@ -165,7 +165,7 @@ public class OvertimeStore {
     }
 
     /** The employee withdraws their own pending claim. */
-    public synchronized void cancel(AuthStore.Account who, long id) throws IOException {
+    public synchronized void cancel(AuthService.Account who, long id) throws IOException {
         Claim c = require(id);
         if (c.accountId() != who.id()) throw new ForbiddenException("you can only withdraw your own claim");
         try (PreparedStatement ps = conn.prepareStatement("""
@@ -184,7 +184,7 @@ public class OvertimeStore {
      * needs a reason. Approving works the overtime out again from the punches
      * as they are now, so a punch fix approved since the claim counts.
      */
-    public synchronized void decide(AuthStore.Account who, long id, boolean approve, String note) throws IOException {
+    public synchronized void decide(AuthService.Account who, long id, boolean approve, String note) throws IOException {
         Claim c = require(id);
         if (!canApprove(who, c.accountId()))
             throw new ForbiddenException("only a director or this person's manager can decide this");
@@ -225,7 +225,7 @@ public class OvertimeStore {
     }
 
     /** A director or the person's manager approves a day without waiting for a claim. */
-    public synchronized long grant(AuthStore.Account who, long accountId, String day, String note) throws IOException {
+    public synchronized long grant(AuthService.Account who, long accountId, String day, String note) throws IOException {
         if (!canApprove(who, accountId))
             throw new ForbiddenException(accountId == who.id() ? "you can't approve your own overtime"
                     : "only a director or this person's manager can approve their overtime");
@@ -356,10 +356,10 @@ public class OvertimeStore {
         return out;
     }
 
-    private boolean canApprove(AuthStore.Account who, long accountId) throws IOException {
+    private boolean canApprove(AuthService.Account who, long accountId) throws IOException {
         if (accountId == who.id()) return false;
-        if (who.has(AuthStore.DIRECTOR)) return true;
-        return who.has(AuthStore.MANAGER) && reportsTo(accountId, who.id());
+        if (who.has(AuthService.DIRECTOR)) return true;
+        return who.has(AuthService.MANAGER) && reportsTo(accountId, who.id());
     }
 
     private boolean reportsTo(long employeeId, long managerId) throws IOException {

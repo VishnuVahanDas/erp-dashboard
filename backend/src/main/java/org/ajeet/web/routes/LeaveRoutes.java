@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.web.Http;
 
@@ -20,9 +20,9 @@ public class LeaveRoutes implements Routes {
     private final Http http;
     private final ObjectMapper mapper;
     private final LeaveStore leave;
-    private final AuthStore auth;
+    private final AuthService auth;
 
-    public LeaveRoutes(Http http, LeaveStore leave, AuthStore auth) {
+    public LeaveRoutes(Http http, LeaveStore leave, AuthService auth) {
         this.http = http;
         this.mapper = http.mapper();
         this.leave = leave;
@@ -32,7 +32,7 @@ public class LeaveRoutes implements Routes {
     @Override
     public boolean handle(HttpExchange ex, String method, String path) throws Exception {
         if (method.equals("GET") && path.equals("/leave/my")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             int year = leave.currentYear();
             ObjectNode out = mapper.createObjectNode();
             out.put("year", year);
@@ -40,7 +40,7 @@ public class LeaveRoutes implements Routes {
             out.set("requests", mapper.valueToTree(leave.forAccount(acct.id())));
             http.send(ex, 200, out);
         } else if (method.equals("POST") && path.equals("/leave")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             JsonNode b = http.readJson(ex);
             long id = leave.apply(acct, new LeaveStore.LeaveInput(
                     b.path("category").asText(""), b.path("from").asText(""), b.path("to").asText(""),
@@ -49,7 +49,7 @@ public class LeaveRoutes implements Routes {
                     b.path("reason").asText("")));
             http.send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
         } else if (method.equals("POST") && path.matches("/leave/\\d+/(approve|reject|cancel)")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             String[] parts = path.split("/");
             long id = Long.parseLong(parts[2]);
             String note = http.readJson(ex).path("note").asText("");
@@ -57,7 +57,7 @@ public class LeaveRoutes implements Routes {
             else leave.decide(acct, id, parts[3].equals("approve"), note);
             http.send(ex, 200, mapper.createObjectNode().put("ok", true));
         } else if (method.equals("GET") && path.equals("/leave/team")) {
-            AuthStore.Account acct = http.requireRole(ex, AuthStore.MANAGER);
+            AuthService.Account acct = http.requireRole(ex, AuthService.MANAGER);
             ObjectNode out = mapper.createObjectNode();
             out.set("requests", mapper.valueToTree(leave.forTeam(acct.id())));
             out.set("usage", mapper.valueToTree(leave.usageForTeam(acct.id())));
@@ -65,7 +65,7 @@ public class LeaveRoutes implements Routes {
             out.set("personQuotas", mapper.valueToTree(leave.personQuotasForTeam(acct.id())));
             http.send(ex, 200, out);
         } else if (method.equals("GET") && path.equals("/leave/all")) {
-            http.requireRole(ex, AuthStore.DIRECTOR);
+            http.requireRole(ex, AuthService.DIRECTOR);
             ObjectNode out = mapper.createObjectNode();
             out.set("requests", mapper.valueToTree(leave.all()));
             out.set("usage", mapper.valueToTree(leave.usageForAll()));
@@ -74,7 +74,7 @@ public class LeaveRoutes implements Routes {
             http.send(ex, 200, out);
         } else if (method.equals("PUT") && path.matches("/leave/quotas/\\d+")) {
             // one person's own quota: a director for anyone, a manager for reportees (checked in the store)
-            AuthStore.Account acct = http.requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+            AuthService.Account acct = http.requireAnyRole(ex, AuthService.DIRECTOR, AuthService.MANAGER);
             long id = Long.parseLong(path.substring("/leave/quotas/".length()));
             if (auth.account(id) == null) throw new IllegalArgumentException("person not found");
             JsonNode b = http.readJson(ex);
@@ -93,7 +93,7 @@ public class LeaveRoutes implements Routes {
             http.requireAccount(ex);
             http.send(ex, 200, mapper.createObjectNode().set("quotas", mapper.valueToTree(leave.quotas())));
         } else if (method.equals("PUT") && path.equals("/leave/quotas")) {
-            http.requireRole(ex, AuthStore.DIRECTOR);
+            http.requireRole(ex, AuthService.DIRECTOR);
             JsonNode b = http.readJson(ex);
             Map<String, Double> q = new LinkedHashMap<>();
             for (String c : LeaveStore.CATEGORIES) {

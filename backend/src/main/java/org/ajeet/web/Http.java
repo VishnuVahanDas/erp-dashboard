@@ -3,7 +3,7 @@ package org.ajeet.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,9 +18,9 @@ import java.time.format.DateTimeParseException;
 public final class Http {
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final AuthStore auth;
+    private final AuthService auth;
 
-    public Http(AuthStore auth) {
+    public Http(AuthService auth) {
         this.auth = auth;
     }
 
@@ -41,23 +41,23 @@ public final class Http {
     }
 
     /** Bearer token -> account, or throws 403. */
-    public AuthStore.Account requireAccount(HttpExchange ex) throws IOException {
-        AuthStore.Account acct = auth.resolve(bearer(ex));
+    public AuthService.Account requireAccount(HttpExchange ex) throws IOException {
+        AuthService.Account acct = auth.resolve(bearer(ex));
         if (acct == null) throw new ForbiddenException("invalid or expired session");
         return acct;
     }
 
     /** Device sync + its status: directors only. */
     public void requireAdmin(HttpExchange ex) throws IOException {
-        requireRole(ex, AuthStore.DIRECTOR);
+        requireRole(ex, AuthService.DIRECTOR);
     }
 
-    public AuthStore.Account requireRole(HttpExchange ex, String role) throws IOException {
+    public AuthService.Account requireRole(HttpExchange ex, String role) throws IOException {
         return requireAnyRole(ex, role);
     }
 
-    public AuthStore.Account requireAnyRole(HttpExchange ex, String... roles) throws IOException {
-        AuthStore.Account acct = requireAccount(ex);
+    public AuthService.Account requireAnyRole(HttpExchange ex, String... roles) throws IOException {
+        AuthService.Account acct = requireAccount(ex);
         for (String r : roles) if (acct.has(r)) return acct;
         throw new ForbiddenException(String.join(" or ", roles) + " role required");
     }

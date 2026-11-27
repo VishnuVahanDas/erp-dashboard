@@ -16,14 +16,13 @@ web-dashboard/
 │   ├── src/main/resources/application.properties   settings (env vars, then .env)
 │   └── src/main/java/org/ajeet/
 │       ├── ErpApplication.java             Spring Boot entry point
-│       ├── web/LegacyWiring.java           opens the stores, seeds the first director (migration step)
+│       ├── web/LegacyWiring.java           opens the stores not ported yet (migration step)
 │       ├── web/LegacyBridgeController.java /api requests not yet on a Spring controller -> ApiServer
 │       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
-│       ├── web/routes/*Routes.java         old REST routes, one class per module not ported yet (Auth,
-│       │                                   People, Leave, Payroll, Overtime)
+│       ├── web/routes/*Routes.java         old REST routes for the modules not ported yet (Leave, Payroll, Overtime)
 │       ├── notify/NotificationController.java  the bell: /notifications (ported)
-│       ├── auth/AuthStore.java             accounts, roles, sessions
+│       ├── auth/{Auth,People}Controller.java, AuthService.java, AuthRepository.java  accounts, roles, sessions (ported)
 │       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side (ported)
 │       ├── attendance/PunchFix{Controller,Service,Repository}.java  missed-punch requests and approved fixes (ported)
 │       ├── sync/SyncController.java        Spring controller: /status, device sync (ported)
@@ -49,7 +48,7 @@ a properties file, so a value containing `\` needs it doubled).
 
 Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`), **Notifications**,
 **MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`), **Attendance**
-(`/attendance/*`).
+(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`).
 Deliberate changes on ported endpoints: a request body that isn't valid JSON
 answers **400** `request body is not valid JSON` (it was a 500 with the
 parser's message); a query parameter given twice (`?as=a&as=b`) is read as

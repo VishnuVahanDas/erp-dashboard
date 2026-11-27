@@ -2,7 +2,7 @@ package org.ajeet.notify;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import org.ajeet.attendance.PunchFixService;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboService;
 import org.ajeet.overtime.OvertimeStore;
@@ -29,14 +29,14 @@ import java.util.function.LongPredicate;
 @RestController
 class NotificationController {
 
-    private final AuthStore auth;
+    private final AuthService auth;
     private final LeaveStore leave;
     private final MboService mbo;
     private final PayrollStore payroll;
     private final PunchFixService punchFixes;
     private final OvertimeStore overtime;
 
-    NotificationController(AuthStore auth, LeaveStore leave, MboService mbo, PayrollStore payroll,
+    NotificationController(AuthService auth, LeaveStore leave, MboService mbo, PayrollStore payroll,
                            PunchFixService punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
@@ -53,10 +53,10 @@ class NotificationController {
     record Notifications(int count, List<Item> items) {}
 
     @GetMapping("/api/notifications")
-    Notifications notifications(@CurrentAccount AuthStore.Account acct,
+    Notifications notifications(@CurrentAccount AuthService.Account acct,
                                 @RequestParam(required = false) String as) throws IOException {
-        if (as == null || as.isBlank()) as = AuthStore.EMPLOYEE;
-        if (!AuthStore.ROLES.contains(as) || !acct.has(as)) throw new Forbidden("you don't have the " + as + " role");
+        if (as == null || as.isBlank()) as = AuthService.EMPLOYEE;
+        if (!AuthService.ROLES.contains(as) || !acct.has(as)) throw new Forbidden("you don't have the " + as + " role");
         List<Item> items = items(acct, as);
         return new Notifications(items.size(), items);
     }
@@ -67,11 +67,11 @@ class NotificationController {
      * their turn plus their own requests decided in the last 7 days. Each item
      * names the tab the dashboard should open.
      */
-    private List<Item> items(AuthStore.Account acct, String as) throws IOException {
+    private List<Item> items(AuthService.Account acct, String as) throws IOException {
         List<Item> out = new ArrayList<>();
         long me = acct.id();
         long weekAgo = System.currentTimeMillis() - 7L * 24 * 3600 * 1000;
-        if (as.equals(AuthStore.EMPLOYEE)) {
+        if (as.equals(AuthService.EMPLOYEE)) {
             for (MboService.MboThread t : mbo.forAccount(me))
                 if (t.status().equals("open") && "employee".equals(t.waitingOn()))
                     out.add(item("mbo", t.id(), "Objective waiting on you", t.title(), "mbo", t.updatedAt()));
@@ -94,10 +94,10 @@ class NotificationController {
                                     + (c.decisionNote() == null || c.decisionNote().isBlank() ? "" : " - \"" + c.decisionNote() + "\""),
                             "payslips", c.decidedAt()));
         } else {
-            boolean director = as.equals(AuthStore.DIRECTOR);
+            boolean director = as.equals(AuthService.DIRECTOR);
             // a manager-view only covers their reportees, even for someone who is also a director
             Set<Long> team = new HashSet<>();
-            if (!director) for (AuthStore.TeamMember m : auth.team(me)) team.add(m.id());
+            if (!director) for (AuthService.TeamMember m : auth.team(me)) team.add(m.id());
             LongPredicate inScope = id -> id != me && (director || team.contains(id));
             for (LeaveStore.LeaveRequest r : director ? leave.all() : leave.forTeam(me))
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
@@ -134,7 +134,7 @@ class NotificationController {
                     day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH))
                             + ": " + what + " - ask your manager for a fix", "log",
                     day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                    AuthStore.EMPLOYEE));
+                    AuthService.EMPLOYEE));
         }
         out.sort(Comparator.comparingLong(Item::at).reversed());
         return out;

@@ -1,6 +1,6 @@
 package org.ajeet.mbo;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Guard;
 import org.ajeet.web.JsonBody;
@@ -32,30 +32,30 @@ class MboController {
     record Threads(List<MboService.MboThread> threads) {}
 
     @GetMapping("/my")
-    Threads my(@CurrentAccount AuthStore.Account me) {
+    Threads my(@CurrentAccount AuthService.Account me) {
         return new Threads(mbo.forAccount(me.id()));
     }
 
     @GetMapping("/managers")
-    Map<String, List<MboService.Counterpart>> managers(@CurrentAccount AuthStore.Account me) {
+    Map<String, List<MboService.Counterpart>> managers(@CurrentAccount AuthService.Account me) {
         return Map.of("managers", mbo.counterparts(me.id()));
     }
 
     @GetMapping("/team")
-    Threads team(@CurrentAccount AuthStore.Account me) {
-        Guard.requireRole(me, AuthStore.MANAGER);
+    Threads team(@CurrentAccount AuthService.Account me) {
+        Guard.requireRole(me, AuthService.MANAGER);
         return new Threads(mbo.forTeam(me.id()));
     }
 
     @GetMapping("/all")
-    Threads all(@CurrentAccount AuthStore.Account me) {
-        Guard.requireRole(me, AuthStore.DIRECTOR);
+    Threads all(@CurrentAccount AuthService.Account me) {
+        Guard.requireRole(me, AuthService.DIRECTOR);
         return new Threads(mbo.allExcept(me.id()));
     }
 
     /** {employeeId?, managerId?, title, body}: see {@link MboService#start}. */
     @PostMapping
-    ResponseEntity<Map<String, Object>> start(@CurrentAccount AuthStore.Account me,
+    ResponseEntity<Map<String, Object>> start(@CurrentAccount AuthService.Account me,
                                               @RequestBody(required = false) byte[] raw) {
         JsonNode b = json.read(raw);
         Long emp = b.hasNonNull("employeeId") ? b.get("employeeId").asLong(0) : null;
@@ -66,7 +66,7 @@ class MboController {
 
     /** {body}: required to deny or suggest. */
     @PostMapping("/{id:\\d+}/{action:acknowledge|deny|suggest}")
-    Map<String, Boolean> respond(@CurrentAccount AuthStore.Account me, @PathVariable String id,
+    Map<String, Boolean> respond(@CurrentAccount AuthService.Account me, @PathVariable String id,
                                  @PathVariable String action, @RequestBody(required = false) byte[] raw) {
         mbo.respond(me, Long.parseLong(id), action, json.read(raw).path("body").asString(""));
         return Map.of("ok", true);

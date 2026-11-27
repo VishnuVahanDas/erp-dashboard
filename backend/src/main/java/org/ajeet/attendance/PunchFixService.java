@@ -1,6 +1,6 @@
 package org.ajeet.attendance;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.Forbidden;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -90,7 +90,7 @@ public class PunchFixService {
 
     // ---------------------------------------------------------------- writes
 
-    public long request(AuthStore.Account who, String day, String in, String out, String reason) {
+    public long request(AuthService.Account who, String day, String in, String out, String reason) {
         LocalDate d = date(day);
         if (!d.isBefore(repo.today())) throw new IllegalArgumentException("you can only fix a day that's already over");
         LocalTime from = time(in, "in"), to = time(out, "out");
@@ -108,7 +108,7 @@ public class PunchFixService {
     }
 
     /** The employee withdraws their own pending request. */
-    public void cancel(AuthStore.Account who, long id) {
+    public void cancel(AuthService.Account who, long id) {
         PunchFix f = require(id);
         if (f.accountId() != who.id()) throw new Forbidden("you can only cancel your own request");
         if (repo.decide(id, "cancelled", who.id(), "") == 0)
@@ -116,7 +116,7 @@ public class PunchFixService {
     }
 
     /** A director or one of the person's managers (never their own); reject needs a reason. */
-    public void decide(AuthStore.Account who, long id, boolean approve, String note) {
+    public void decide(AuthService.Account who, long id, boolean approve, String note) {
         PunchFix f = require(id);
         if (!canApprove(who, f.accountId()))
             throw new Forbidden("only a director or this person's manager can decide this");
@@ -130,10 +130,10 @@ public class PunchFixService {
 
     // --------------------------------------------------------------- helpers
 
-    private boolean canApprove(AuthStore.Account who, long accountId) {
+    private boolean canApprove(AuthService.Account who, long accountId) {
         if (accountId == who.id()) return false;
-        if (who.has(AuthStore.DIRECTOR)) return true;
-        if (!who.has(AuthStore.MANAGER)) return false;
+        if (who.has(AuthService.DIRECTOR)) return true;
+        if (!who.has(AuthService.MANAGER)) return false;
         return repo.reportsTo(accountId, who.id());
     }
 

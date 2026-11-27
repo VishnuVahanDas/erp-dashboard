@@ -3,7 +3,7 @@ package org.ajeet.payroll;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -189,9 +189,9 @@ public class PayrollStore {
      * Salary rows (all statuses), newest first per person. Directors see
      * everyone; managers only the people who report to them.
      */
-    public synchronized List<Salary> salaries(AuthStore.Account who) throws IOException {
-        boolean director = who.has(AuthStore.DIRECTOR);
-        if (!director && !who.has(AuthStore.MANAGER)) throw new ForbiddenException("director or manager role required");
+    public synchronized List<Salary> salaries(AuthService.Account who) throws IOException {
+        boolean director = who.has(AuthService.DIRECTOR);
+        if (!director && !who.has(AuthService.MANAGER)) throw new ForbiddenException("director or manager role required");
         List<Salary> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT s.id, s.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
@@ -232,7 +232,7 @@ public class PayrollStore {
      * also closes open requests for the person: a pending recommendation is
      * accepted, a pending proposal is replaced (rejected with a note).
      */
-    public synchronized Saved addSalary(AuthStore.Account who, SalaryInput in) throws IOException {
+    public synchronized Saved addSalary(AuthService.Account who, SalaryInput in) throws IOException {
         if (in.accountId() <= 0) throw new IllegalArgumentException("pick the employee");
         if (!canApprove(who, in.accountId()))
             throw new ForbiddenException(in.accountId() == who.id()
@@ -302,9 +302,9 @@ public class PayrollStore {
     // ------------------------------------------------------ recommendations
 
     /** Directors: all. Managers: those for people who report to them. Newest first. */
-    public synchronized List<Recommendation> recommendations(AuthStore.Account who) throws IOException {
-        boolean director = who.has(AuthStore.DIRECTOR);
-        if (!director && !who.has(AuthStore.MANAGER)) throw new ForbiddenException("director or manager role required");
+    public synchronized List<Recommendation> recommendations(AuthService.Account who) throws IOException {
+        boolean director = who.has(AuthService.DIRECTOR);
+        if (!director && !who.has(AuthService.MANAGER)) throw new ForbiddenException("director or manager role required");
         List<Recommendation> out = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT r.id, r.account_id, COALESCE(NULLIF(a.full_name,''), a.email), a.email,
@@ -338,9 +338,9 @@ public class PayrollStore {
     }
 
     /** A manager recommends a reportee who isn't on payroll yet; the director sets the amount. */
-    public synchronized long recommend(AuthStore.Account who, long accountId, String startDate, String note) throws IOException {
+    public synchronized long recommend(AuthService.Account who, long accountId, String startDate, String note) throws IOException {
         if (accountId <= 0) throw new IllegalArgumentException("pick the team member");
-        if (!who.has(AuthStore.MANAGER) || accountId == who.id() || !reportsTo(accountId, who.id()))
+        if (!who.has(AuthService.MANAGER) || accountId == who.id() || !reportsTo(accountId, who.id()))
             throw new ForbiddenException("you can only recommend someone who reports to you");
         String n = note == null ? "" : note.trim();
         if (n.length() > MAX_NOTE) throw new IllegalArgumentException("note is too long");
@@ -368,7 +368,7 @@ public class PayrollStore {
     }
 
     /** Director declines a pending recommendation, with a reason the manager sees. */
-    public synchronized void declineRecommendation(AuthStore.Account who, long id, String note) throws IOException {
+    public synchronized void declineRecommendation(AuthService.Account who, long id, String note) throws IOException {
         requireApprover(who, "SELECT account_id FROM payroll_recommendations WHERE id = ?", id, "recommendation");
         String n = note == null ? "" : note.trim();
         if (n.isEmpty()) throw new IllegalArgumentException("say why the recommendation is declined");
@@ -386,13 +386,13 @@ public class PayrollStore {
     }
 
     /** May set / approve pay for this person: any director, or one of their managers - never yourself. */
-    private boolean canApprove(AuthStore.Account who, long accountId) throws IOException {
-        if (who.has(AuthStore.DIRECTOR)) return true;
-        return who.has(AuthStore.MANAGER) && accountId != who.id() && reportsTo(accountId, who.id());
+    private boolean canApprove(AuthService.Account who, long accountId) throws IOException {
+        if (who.has(AuthService.DIRECTOR)) return true;
+        return who.has(AuthService.MANAGER) && accountId != who.id() && reportsTo(accountId, who.id());
     }
 
     /** Looks up whose request a row is and requires `who` to be an approver for them. */
-    private void requireApprover(AuthStore.Account who, String sql, long id, String what) throws IOException {
+    private void requireApprover(AuthService.Account who, String sql, long id, String what) throws IOException {
         long accountId;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, id);
@@ -427,7 +427,7 @@ public class PayrollStore {
     }
 
     /** Director approves or rejects a manager's pending proposal. First decision wins. */
-    public synchronized void decideSalary(AuthStore.Account who, long id, boolean approve, String note) throws IOException {
+    public synchronized void decideSalary(AuthService.Account who, long id, boolean approve, String note) throws IOException {
         requireApprover(who, "SELECT account_id FROM payroll_salaries WHERE id = ?", id, "salary proposal");
         String n = note == null ? "" : note.trim();
         if (!approve && n.isEmpty()) throw new IllegalArgumentException("say why the proposal is rejected");
@@ -563,9 +563,9 @@ public class PayrollStore {
      * month; a manager their reportee's finalized/paid months; anyone their own
      * finalized/paid months.
      */
-    public synchronized List<Line> personLines(AuthStore.Account who, long accountId) throws IOException {
-        if (who.has(AuthStore.DIRECTOR)) return lines("l.account_id = ?", accountId);
-        if (accountId != who.id() && !(who.has(AuthStore.MANAGER) && reportsTo(accountId, who.id())))
+    public synchronized List<Line> personLines(AuthService.Account who, long accountId) throws IOException {
+        if (who.has(AuthService.DIRECTOR)) return lines("l.account_id = ?", accountId);
+        if (accountId != who.id() && !(who.has(AuthService.MANAGER) && reportsTo(accountId, who.id())))
             throw new ForbiddenException("you can't see this person's pay");
         return lines("l.account_id = ? AND r.status <> 'draft'", accountId);
     }
@@ -575,13 +575,13 @@ public class PayrollStore {
      * Scope: directors any line; managers their reportees' finalized lines;
      * everyone their own finalized line.
      */
-    public synchronized List<Day> days(AuthStore.Account who, YearMonth ym, long accountId) throws IOException {
+    public synchronized List<Day> days(AuthService.Account who, YearMonth ym, long accountId) throws IOException {
         Line line = lines("l.month = ? AND l.account_id = ?", Date.valueOf(ym.atDay(1)), accountId)
                 .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("no payroll line for that month"));
-        boolean director = who.has(AuthStore.DIRECTOR);
+        boolean director = who.has(AuthService.DIRECTOR);
         if (!director) {
             if (line.status().equals("draft")) throw new ForbiddenException("this month isn't finalized yet");
-            if (accountId != who.id() && !(who.has(AuthStore.MANAGER) && reportsTo(accountId, who.id())))
+            if (accountId != who.id() && !(who.has(AuthService.MANAGER) && reportsTo(accountId, who.id())))
                 throw new ForbiddenException("you can't see this payslip");
         }
         try (PreparedStatement ps = conn.prepareStatement("SELECT days FROM payroll_lines WHERE month = ? AND account_id = ?")) {
@@ -723,7 +723,7 @@ public class PayrollStore {
         }
     }
 
-    public synchronized void finalizeRun(AuthStore.Account who, YearMonth ym) throws IOException {
+    public synchronized void finalizeRun(AuthService.Account who, YearMonth ym) throws IOException {
         requireStatus(ym, "draft", "finalized");
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE payroll_runs SET status = 'finalized', finalized_at = now(), finalized_by = ?

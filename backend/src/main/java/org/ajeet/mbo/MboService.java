@@ -1,6 +1,6 @@
 package org.ajeet.mbo;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.web.Forbidden;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -102,7 +102,7 @@ public class MboService {
      * a lock on the pair for the transaction keeps two requests from both taking the last place.
      */
     @Transactional(rollbackFor = Exception.class)
-    public long start(AuthStore.Account who, Long employeeId, Long managerId, String title, String body) {
+    public long start(AuthService.Account who, Long employeeId, Long managerId, String title, String body) {
         long emp = employeeId == null || employeeId == 0 ? who.id() : employeeId;
         String side = emp == who.id() ? EMPLOYEE : MANAGER;
         long mgr;
@@ -131,7 +131,7 @@ public class MboService {
 
     /** action: acknowledge | deny | suggest. Only the side whose turn it is may answer. */
     @Transactional(rollbackFor = Exception.class)
-    public void respond(AuthStore.Account who, long threadId, String action, String body) {
+    public void respond(AuthService.Account who, long threadId, String action, String body) {
         repo.expireEnded();
         MboThread t = require(threadId);
         String side;
@@ -173,16 +173,16 @@ public class MboService {
     }
 
     /** May answer on the manager side: the named manager, or any director. */
-    private boolean answersFor(AuthStore.Account who, MboThread t) {
+    private boolean answersFor(AuthService.Account who, MboThread t) {
         if (who.id() == t.employeeId()) return false;
         if (t.managerId() == null) return canManage(who, t.employeeId()); // pre-manager_id thread
-        return who.id() == t.managerId() || who.has(AuthStore.DIRECTOR);
+        return who.id() == t.managerId() || who.has(AuthService.DIRECTOR);
     }
 
-    private boolean canManage(AuthStore.Account who, long employeeId) {
+    private boolean canManage(AuthService.Account who, long employeeId) {
         if (who.id() == employeeId) return false;
-        if (who.has(AuthStore.DIRECTOR)) return true;
-        if (!who.has(AuthStore.MANAGER)) return false;
+        if (who.has(AuthService.DIRECTOR)) return true;
+        if (!who.has(AuthService.MANAGER)) return false;
         return repo.reportsTo(employeeId, who.id());
     }
 

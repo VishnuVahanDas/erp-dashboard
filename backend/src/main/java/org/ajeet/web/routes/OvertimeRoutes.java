@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.web.Http;
 
@@ -27,35 +27,35 @@ public class OvertimeRoutes implements Routes {
     @Override
     public boolean handle(HttpExchange ex, String method, String path) throws Exception {
         if (method.equals("GET") && path.equals("/overtime/my")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             ObjectNode out = mapper.createObjectNode();
             out.set("claims", mapper.valueToTree(overtime.mine(acct.id())));
             out.set("available", mapper.valueToTree(overtime.availableMine(acct.id())));
             http.send(ex, 200, out);
         } else if (method.equals("GET") && path.equals("/overtime/team")) {
             // directors: everyone else; managers: their reportees
-            AuthStore.Account acct = http.requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+            AuthService.Account acct = http.requireAnyRole(ex, AuthService.DIRECTOR, AuthService.MANAGER);
             ObjectNode out = mapper.createObjectNode();
-            out.set("claims", mapper.valueToTree(acct.has(AuthStore.DIRECTOR) ? overtime.all() : overtime.forTeam(acct.id())));
+            out.set("claims", mapper.valueToTree(acct.has(AuthService.DIRECTOR) ? overtime.all() : overtime.forTeam(acct.id())));
             out.set("available", mapper.valueToTree(overtime.availableForTeam(acct)));
             http.send(ex, 200, out);
         } else if (method.equals("GET") && path.matches("/overtime/person/[0-9]+")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             http.send(ex, 200, mapper.createObjectNode().set("claims",
                     mapper.valueToTree(overtime.forPerson(acct, Long.parseLong(path.split("/")[3])))));
         } else if (method.equals("POST") && path.equals("/overtime")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             JsonNode b = http.readJson(ex);
             long id = overtime.request(acct, b.path("day").asText(""), b.path("reason").asText(""));
             http.send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
         } else if (method.equals("POST") && path.equals("/overtime/grant")) {
-            AuthStore.Account acct = http.requireAnyRole(ex, AuthStore.DIRECTOR, AuthStore.MANAGER);
+            AuthService.Account acct = http.requireAnyRole(ex, AuthService.DIRECTOR, AuthService.MANAGER);
             JsonNode b = http.readJson(ex);
             long id = overtime.grant(acct, b.path("accountId").asLong(0), b.path("day").asText(""),
                     b.path("note").asText(""));
             http.send(ex, 201, mapper.createObjectNode().put("ok", true).put("id", id));
         } else if (method.equals("POST") && path.matches("/overtime/[0-9]+/(approve|reject|cancel)")) {
-            AuthStore.Account acct = http.requireAccount(ex);
+            AuthService.Account acct = http.requireAccount(ex);
             String[] parts = path.split("/");
             long id = Long.parseLong(parts[2]);
             if (parts[3].equals("cancel")) overtime.cancel(acct, id);

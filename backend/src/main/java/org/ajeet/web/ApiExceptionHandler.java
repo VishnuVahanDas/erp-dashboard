@@ -1,6 +1,6 @@
 package org.ajeet.web;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
@@ -28,8 +28,8 @@ class ApiExceptionHandler {
         return ResponseEntity.status(status).body(new ApiError(message));
     }
 
-    @ExceptionHandler(AuthStore.AuthException.class)
-    ResponseEntity<ApiError> unauthorized(AuthStore.AuthException e) {
+    @ExceptionHandler(AuthService.AuthException.class)
+    ResponseEntity<ApiError> unauthorized(AuthService.AuthException e) {
         return error(401, e.getMessage());
     }
 

@@ -2,7 +2,7 @@ package org.ajeet.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
@@ -44,7 +44,7 @@ public class ApiServer {
             for (Routes r : routes)
                 if (r.handle(ex, method, path)) return;
             http.send(ex, 404, mapper.createObjectNode().put("error", "not found"));
-        } catch (AuthStore.AuthException e) {
+        } catch (AuthService.AuthException e) {
             http.send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (Http.ForbiddenException | LeaveStore.ForbiddenException | Forbidden
                  | PayrollStore.ForbiddenException

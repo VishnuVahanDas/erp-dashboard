@@ -1,17 +1,17 @@
 package org.ajeet.web;
 
-import org.ajeet.auth.AuthStore;
+import org.ajeet.auth.AuthService;
 
 /** Role checks for Spring controllers, with the messages the old {@code Http} guards gave (403). */
 public final class Guard {
 
     private Guard() {}
 
-    public static AuthStore.Account requireRole(AuthStore.Account acct, String role) {
+    public static AuthService.Account requireRole(AuthService.Account acct, String role) {
         return requireAnyRole(acct, role);
     }
 
-    public static AuthStore.Account requireAnyRole(AuthStore.Account acct, String... roles) {
+    public static AuthService.Account requireAnyRole(AuthService.Account acct, String... roles) {
         for (String r : roles) if (acct.has(r)) return acct;
         throw new Forbidden(String.join(" or ", roles) + " role required");
     }
