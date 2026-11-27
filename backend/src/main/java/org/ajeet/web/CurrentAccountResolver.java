@@ -27,7 +27,7 @@ final class CurrentAccountResolver implements HandlerMethodArgumentResolver {
         String h = req.getHeader("Authorization");
         String token = (h != null && h.startsWith("Bearer ")) ? h.substring(7).trim() : null;
         AuthStore.Account acct = auth.resolve(token);
-        if (acct == null) throw new Http.ForbiddenException("invalid or expired session");
+        if (acct == null) throw new Forbidden("invalid or expired session");
         return acct;
     }
 }

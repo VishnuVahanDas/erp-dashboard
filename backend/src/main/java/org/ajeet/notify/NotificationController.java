@@ -4,11 +4,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
-import org.ajeet.mbo.MboStore;
+import org.ajeet.mbo.MboService;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.web.CurrentAccount;
-import org.ajeet.web.Http;
+import org.ajeet.web.Forbidden;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,12 +31,12 @@ class NotificationController {
 
     private final AuthStore auth;
     private final LeaveStore leave;
-    private final MboStore mbo;
+    private final MboService mbo;
     private final PayrollStore payroll;
     private final PunchFixStore punchFixes;
     private final OvertimeStore overtime;
 
-    NotificationController(AuthStore auth, LeaveStore leave, MboStore mbo, PayrollStore payroll,
+    NotificationController(AuthStore auth, LeaveStore leave, MboService mbo, PayrollStore payroll,
                            PunchFixStore punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
@@ -56,7 +56,7 @@ class NotificationController {
     Notifications notifications(@CurrentAccount AuthStore.Account acct,
                                 @RequestParam(required = false) String as) throws IOException {
         if (as == null || as.isBlank()) as = AuthStore.EMPLOYEE;
-        if (!AuthStore.ROLES.contains(as) || !acct.has(as)) throw new Http.ForbiddenException("you don't have the " + as + " role");
+        if (!AuthStore.ROLES.contains(as) || !acct.has(as)) throw new Forbidden("you don't have the " + as + " role");
         List<Item> items = items(acct, as);
         return new Notifications(items.size(), items);
     }
@@ -72,7 +72,7 @@ class NotificationController {
         long me = acct.id();
         long weekAgo = System.currentTimeMillis() - 7L * 24 * 3600 * 1000;
         if (as.equals(AuthStore.EMPLOYEE)) {
-            for (MboStore.MboThread t : mbo.forAccount(me))
+            for (MboService.MboThread t : mbo.forAccount(me))
                 if (t.status().equals("open") && "employee".equals(t.waitingOn()))
                     out.add(item("mbo", t.id(), "Objective waiting on you", t.title(), "mbo", t.updatedAt()));
             for (LeaveStore.LeaveRequest r : leave.forAccount(me))
@@ -117,7 +117,7 @@ class NotificationController {
             for (PayrollStore.Salary s : payroll.salaries(acct))
                 if (s.status().equals("pending") && inScope.test(s.accountId()))
                     out.add(item("salary", s.id(), "Salary proposal · " + s.name(), "proposed by " + s.createdBy(), "payroll", s.createdAt()));
-            for (MboStore.MboThread t : director ? mbo.allExcept(me) : mbo.forTeam(me))
+            for (MboService.MboThread t : director ? mbo.allExcept(me) : mbo.forTeam(me))
                 if (t.status().equals("open") && "manager".equals(t.waitingOn())
                         && (t.managerId() == null || t.managerId() == me))
                     out.add(item("mbo", t.id(), "Objective waiting on you · " + t.employeeName(), t.title(), "mbo", t.updatedAt()));

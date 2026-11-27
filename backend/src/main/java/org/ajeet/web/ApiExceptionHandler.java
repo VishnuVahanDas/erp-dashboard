@@ -3,7 +3,6 @@ package org.ajeet.web;
 import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
-import org.ajeet.mbo.MboStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.slf4j.Logger;
@@ -35,9 +34,9 @@ class ApiExceptionHandler {
         return error(401, e.getMessage());
     }
 
-    @ExceptionHandler({Http.ForbiddenException.class, LeaveStore.ForbiddenException.class,
-            MboStore.ForbiddenException.class, PayrollStore.ForbiddenException.class,
-            PunchFixStore.ForbiddenException.class, OvertimeStore.ForbiddenException.class})
+    @ExceptionHandler({Forbidden.class, Http.ForbiddenException.class, LeaveStore.ForbiddenException.class,
+            PayrollStore.ForbiddenException.class, PunchFixStore.ForbiddenException.class,
+            OvertimeStore.ForbiddenException.class})
     ResponseEntity<ApiError> forbidden(Exception e) {
         return error(403, e.getMessage());
     }

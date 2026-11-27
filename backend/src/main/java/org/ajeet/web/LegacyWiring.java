@@ -4,13 +4,11 @@ import org.ajeet.attendance.AttendanceStore;
 import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
-import org.ajeet.mbo.MboStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
 import org.ajeet.web.routes.AttendanceRoutes;
 import org.ajeet.web.routes.AuthRoutes;
 import org.ajeet.web.routes.LeaveRoutes;
-import org.ajeet.web.routes.MboRoutes;
 import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.ajeet.web.routes.PeopleRoutes;
@@ -31,7 +29,7 @@ import java.util.List;
 class LegacyWiring {
 
     /** The old stores, opened together so their creation order (and so their tables') stays fixed. */
-    record LegacyStores(AttendanceStore attendance, AuthStore auth, LeaveStore leave, MboStore mbo,
+    record LegacyStores(AttendanceStore attendance, AuthStore auth, LeaveStore leave,
                         PayrollStore payroll, PunchFixStore punchFixes, OvertimeStore overtime) {}
 
     @Bean
@@ -53,20 +51,18 @@ class LegacyWiring {
 
         // after AuthStore: leave_requests references accounts
         LeaveStore leave = new LeaveStore(pgUrl, pgUser, pgPass);
-        MboStore mbo = new MboStore(pgUrl, pgUser, pgPass);
         // after LeaveStore: payroll reads leave_requests and punches
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
         // after AuthStore: punch_fixes references accounts
         PunchFixStore punchFixes = new PunchFixStore(pgUrl, pgUser, pgPass);
         // after PunchFixStore and PayrollStore: overtime reads punch_fixes and payroll_runs
         OvertimeStore overtime = new OvertimeStore(pgUrl, pgUser, pgPass);
-        return new LegacyStores(attendance, auth, leave, mbo, payroll, punchFixes, overtime);
+        return new LegacyStores(attendance, auth, leave, payroll, punchFixes, overtime);
     }
 
     @Bean AttendanceStore attendanceStore(LegacyStores s) { return s.attendance(); }
     @Bean AuthStore authStore(LegacyStores s) { return s.auth(); }
     @Bean LeaveStore leaveStore(LegacyStores s) { return s.leave(); }
-    @Bean MboStore mboStore(LegacyStores s) { return s.mbo(); }
     @Bean PayrollStore payrollStore(LegacyStores s) { return s.payroll(); }
     @Bean PunchFixStore punchFixStore(LegacyStores s) { return s.punchFixes(); }
     @Bean OvertimeStore overtimeStore(LegacyStores s) { return s.overtime(); }
@@ -80,7 +76,6 @@ class LegacyWiring {
                 new AttendanceRoutes(http, s.attendance(), s.auth(), s.punchFixes()),
                 new PeopleRoutes(http, s.auth(), s.attendance()),
                 new LeaveRoutes(http, s.leave(), s.auth()),
-                new MboRoutes(http, s.mbo()),
                 new PunchFixRoutes(http, s.punchFixes()),
                 new PayrollRoutes(http, s.payroll()),
                 new OvertimeRoutes(http, s.overtime())));

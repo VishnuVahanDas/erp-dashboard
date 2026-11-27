@@ -19,6 +19,8 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/CurrentAccount           controller parameter: Bearer token -> account, else 403 "invalid or expired session"
     web/Guard.java               role checks for controllers (Guard.requireRole), same 403 messages as before
     web/ApiExceptionHandler      controller errors -> 401 / 403 / 400 / 500 with {"error": ...}
+    web/Forbidden.java           unchecked 403 for ported services and guards
+    web/JsonBody.java            reads a request body like the old Http.readJson (any type, empty = {})
     web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores, seeds the director, lists
                                  the route modules in their old match order (what Main used to do)
     web/LegacyBridgeController   MIGRATION: /api/** that no Spring controller claims -> ApiServer
@@ -27,7 +29,7 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
     web/routes/<Module>Routes    one per area still on the old style: Auth, Attendance, People,
-                                 Leave, Mbo, PunchFix, Payroll, Overtime (Jackson 2)
+                                 Leave, PunchFix, Payroll, Overtime (Jackson 2)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
@@ -35,8 +37,10 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     sync/SyncController          PORTED: /status, POST /sync, /sync/status (directors)
     sync/SyncRepository          "Sync device" queue + agent heartbeat (JdbcClient; shared tables, DDL = sdk's)
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
-    mbo/MboStore.java            weekly MBO threads (shown as "Objectives" in the UI; up to 6 per
-                                 manager per week, grouped by month, expire when the week ends) and entries
+    mbo/MboController            PORTED: /mbo/* (weekly MBOs, shown as "Objectives" in the UI; up to 6 per
+                                 manager per week, grouped by month, expire when the week ends)
+    mbo/MboService               rules + @Transactional writes; the weekly limit is held by a lock on the pair
+    mbo/MboRepository            SQL (JdbcClient) and its tables' DDL / migration at startup
     payroll/PayrollStore.java    salaries, holidays, monthly runs; pay rules in PayrollStore.compute
     overtime/OvertimeStore.java  overtime claims (own table); tier rule in OvertimeStore.otDays, counted
                                  from a 9:00 h span (OT_START_MIN; a full day for cuts is PayrollStore.SHIFT_MIN
@@ -69,6 +73,17 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
   messages identical: the `tools/parity` diff against the `old` snapshot must stay
   empty. Don't add features in the old style meanwhile. The two notes below on
   routes and dependencies describe the old style until the move is finished.
+- **Porting an area** (see `mbo/`, the first full one): `<Area>Controller`
+  (`@RequestMapping("/api/...")`, `@CurrentAccount` first, `Guard` for roles,
+  body as `@RequestBody(required = false) byte[]` read with `JsonBody`, the same
+  response records), `<Area>Service` (rules, messages, `@Transactional(rollbackFor
+  = Exception.class)` on writes, throws `Forbidden` / `IllegalArgumentException`)
+  and `<Area>Repository` (the same SQL on `JdbcClient`, its DDL in the constructor;
+  `@DependsOn("legacyStores")` while it references tables an old store creates).
+  Where the old store relied on `synchronized` for a check-then-write, hold a
+  lock in the transaction (`pg_advisory_xact_lock`, `SELECT ... FOR UPDATE`).
+  Then remove the store and routes from `LegacyWiring`, delete them, and check:
+  unit tests, parity diff, and the area's writes by hand for each role.
 - **Each module owns its tables.** Every `*Store` creates its own tables with
   `CREATE TABLE IF NOT EXISTS` (plus any idempotent `ALTER ... IF NOT EXISTS`
   migrations) at startup. There is no migration tool. Schema changes must be
