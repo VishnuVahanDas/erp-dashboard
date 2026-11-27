@@ -29,10 +29,11 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
     web/routes/<Module>Routes    one per area still on the old style: Auth, Attendance, People,
-                                 Leave, PunchFix, Payroll, Overtime (Jackson 2)
+                                 Leave, Payroll, Overtime (Jackson 2)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
-    attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
+    attendance/PunchFix{Controller,Service,Repository}  PORTED: /punch-fixes/* missed-punch requests
+                                 (own table; never writes punches); approvedPunches feeds the attendance views
     notify/NotificationController  PORTED: /notifications (the bell), reads the other stores
     sync/SyncController          PORTED: /status, POST /sync, /sync/status (directors)
     sync/SyncRepository          "Sync device" queue + agent heartbeat (JdbcClient; shared tables, DDL = sdk's)

@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import org.ajeet.attendance.AttendanceStore;
-import org.ajeet.attendance.PunchFixStore;
+import org.ajeet.attendance.PunchFixService;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.web.Http;
 
@@ -22,9 +22,9 @@ public class AttendanceRoutes implements Routes {
     private final ObjectMapper mapper;
     private final AttendanceStore attendance;
     private final AuthStore auth;
-    private final PunchFixStore punchFixes;
+    private final PunchFixService punchFixes;
 
-    public AttendanceRoutes(Http http, AttendanceStore attendance, AuthStore auth, PunchFixStore punchFixes) {
+    public AttendanceRoutes(Http http, AttendanceStore attendance, AuthStore auth, PunchFixService punchFixes) {
         this.http = http;
         this.mapper = http.mapper();
         this.attendance = attendance;

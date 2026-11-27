@@ -1,7 +1,7 @@
 package org.ajeet.web;
 
 import org.ajeet.attendance.AttendanceStore;
-import org.ajeet.attendance.PunchFixStore;
+import org.ajeet.attendance.PunchFixService;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.overtime.OvertimeStore;
@@ -12,7 +12,6 @@ import org.ajeet.web.routes.LeaveRoutes;
 import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.ajeet.web.routes.PeopleRoutes;
-import org.ajeet.web.routes.PunchFixRoutes;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,7 +29,7 @@ class LegacyWiring {
 
     /** The old stores, opened together so their creation order (and so their tables') stays fixed. */
     record LegacyStores(AttendanceStore attendance, AuthStore auth, LeaveStore leave,
-                        PayrollStore payroll, PunchFixStore punchFixes, OvertimeStore overtime) {}
+                        PayrollStore payroll, OvertimeStore overtime) {}
 
     @Bean
     LegacyStores legacyStores(@Value("${spring.datasource.url}") String pgUrl,
@@ -53,30 +52,26 @@ class LegacyWiring {
         LeaveStore leave = new LeaveStore(pgUrl, pgUser, pgPass);
         // after LeaveStore: payroll reads leave_requests and punches
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
-        // after AuthStore: punch_fixes references accounts
-        PunchFixStore punchFixes = new PunchFixStore(pgUrl, pgUser, pgPass);
-        // after PunchFixStore and PayrollStore: overtime reads punch_fixes and payroll_runs
+        // after PayrollStore: overtime reads payroll_runs (and punch_fixes, created by PunchFixRepository)
         OvertimeStore overtime = new OvertimeStore(pgUrl, pgUser, pgPass);
-        return new LegacyStores(attendance, auth, leave, payroll, punchFixes, overtime);
+        return new LegacyStores(attendance, auth, leave, payroll, overtime);
     }
 
     @Bean AttendanceStore attendanceStore(LegacyStores s) { return s.attendance(); }
     @Bean AuthStore authStore(LegacyStores s) { return s.auth(); }
     @Bean LeaveStore leaveStore(LegacyStores s) { return s.leave(); }
     @Bean PayrollStore payrollStore(LegacyStores s) { return s.payroll(); }
-    @Bean PunchFixStore punchFixStore(LegacyStores s) { return s.punchFixes(); }
     @Bean OvertimeStore overtimeStore(LegacyStores s) { return s.overtime(); }
 
     /** Old route modules, asked in this order (the order the routes were always matched in). */
     @Bean
-    ApiServer legacyApi(LegacyStores s) {
+    ApiServer legacyApi(LegacyStores s, PunchFixService punchFixes) {
         Http http = new Http(s.auth());
         return new ApiServer(http, List.of(
                 new AuthRoutes(http, s.auth()),
-                new AttendanceRoutes(http, s.attendance(), s.auth(), s.punchFixes()),
+                new AttendanceRoutes(http, s.attendance(), s.auth(), punchFixes),
                 new PeopleRoutes(http, s.auth(), s.attendance()),
                 new LeaveRoutes(http, s.leave(), s.auth()),
-                new PunchFixRoutes(http, s.punchFixes()),
                 new PayrollRoutes(http, s.payroll()),
                 new OvertimeRoutes(http, s.overtime())));
     }

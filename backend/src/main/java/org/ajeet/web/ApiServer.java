@@ -2,7 +2,6 @@ package org.ajeet.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
-import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.overtime.OvertimeStore;
@@ -48,7 +47,7 @@ public class ApiServer {
         } catch (AuthStore.AuthException e) {
             http.send(ex, 401, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (Http.ForbiddenException | LeaveStore.ForbiddenException | Forbidden
-                 | PayrollStore.ForbiddenException | PunchFixStore.ForbiddenException
+                 | PayrollStore.ForbiddenException
                  | OvertimeStore.ForbiddenException e) {
             http.send(ex, 403, mapper.createObjectNode().put("error", e.getMessage()));
         } catch (IllegalArgumentException e) {

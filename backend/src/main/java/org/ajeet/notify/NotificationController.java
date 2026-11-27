@@ -1,7 +1,7 @@
 package org.ajeet.notify;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import org.ajeet.attendance.PunchFixStore;
+import org.ajeet.attendance.PunchFixService;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboService;
@@ -33,11 +33,11 @@ class NotificationController {
     private final LeaveStore leave;
     private final MboService mbo;
     private final PayrollStore payroll;
-    private final PunchFixStore punchFixes;
+    private final PunchFixService punchFixes;
     private final OvertimeStore overtime;
 
     NotificationController(AuthStore auth, LeaveStore leave, MboService mbo, PayrollStore payroll,
-                           PunchFixStore punchFixes, OvertimeStore overtime) {
+                           PunchFixService punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
         this.mbo = mbo;
@@ -79,7 +79,7 @@ class NotificationController {
                 if (r.decidedAt() != null && r.decidedAt() > weekAgo && !r.status().equals("cancelled"))
                     out.add(item("leave-decided", r.id(), "Leave " + r.status(),
                             r.from() + (r.to().equals(r.from()) ? "" : " to " + r.to()) + " · by " + r.decidedBy(), "leave", r.decidedAt()));
-            for (PunchFixStore.PunchFix f : punchFixes.mine(me))
+            for (PunchFixService.PunchFix f : punchFixes.mine(me))
                 if (f.decidedAt() != null && f.decidedAt() > weekAgo && !f.status().equals("cancelled"))
                     out.add(item("fix-decided", f.id(),
                             "Punch fix " + (f.status().equals("rejected") ? "declined" : f.status()),
@@ -103,7 +103,7 @@ class NotificationController {
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
                     out.add(item("leave", r.id(), "Leave request · " + r.name(),
                             r.category() + " · " + r.from() + (r.to().equals(r.from()) ? "" : " to " + r.to()), "leave", r.appliedAt()));
-            for (PunchFixStore.PunchFix f : director ? punchFixes.all() : punchFixes.forTeam(me))
+            for (PunchFixService.PunchFix f : director ? punchFixes.all() : punchFixes.forTeam(me))
                 if (f.status().equals("pending") && inScope.test(f.accountId()))
                     out.add(item("fix", f.id(), "Punch fix · " + f.name(), f.day() + " · " + f.in() + "-" + f.out(), "today", f.createdAt()));
             for (OvertimeStore.Claim c : director ? overtime.all() : overtime.forTeam(me))
@@ -124,7 +124,7 @@ class NotificationController {
         }
         // your own incomplete punches, in every role: a manager asks their own reporting manager,
         // so the item opens the employee Punch history where the fix is requested
-        for (PunchFixStore.MissingDay d : punchFixes.missingDays(me, acct.enrollNumber())) {
+        for (PunchFixService.MissingDay d : punchFixes.missingDays(me, acct.enrollNumber())) {
             LocalDate day = LocalDate.parse(d.day());
             String what = d.punches().size() == 1
                     ? "only one punch (" + d.punches().get(0) + ")"

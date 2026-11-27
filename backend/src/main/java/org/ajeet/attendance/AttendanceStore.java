@@ -52,7 +52,7 @@ public class AttendanceStore {
     /**
      * One punch row for the portal: name resolved via the users join.
      * addedBy is null for device punches; for an approved missed-punch fix
-     * (see PunchFixStore#approvedPunches) it names who approved it.
+     * (see PunchFixService#approvedPunches) it names who approved it.
      */
     public record AttendancePunch(int enrollNumber, String name, String time, String verifyLabel, String addedBy) {}
 
