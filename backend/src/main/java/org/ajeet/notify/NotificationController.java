@@ -3,7 +3,7 @@ package org.ajeet.notify;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import org.ajeet.attendance.PunchFixService;
 import org.ajeet.auth.AuthService;
-import org.ajeet.leave.LeaveStore;
+import org.ajeet.leave.LeaveService;
 import org.ajeet.mbo.MboService;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
@@ -30,13 +30,13 @@ import java.util.function.LongPredicate;
 class NotificationController {
 
     private final AuthService auth;
-    private final LeaveStore leave;
+    private final LeaveService leave;
     private final MboService mbo;
     private final PayrollStore payroll;
     private final PunchFixService punchFixes;
     private final OvertimeStore overtime;
 
-    NotificationController(AuthService auth, LeaveStore leave, MboService mbo, PayrollStore payroll,
+    NotificationController(AuthService auth, LeaveService leave, MboService mbo, PayrollStore payroll,
                            PunchFixService punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
@@ -75,7 +75,7 @@ class NotificationController {
             for (MboService.MboThread t : mbo.forAccount(me))
                 if (t.status().equals("open") && "employee".equals(t.waitingOn()))
                     out.add(item("mbo", t.id(), "Objective waiting on you", t.title(), "mbo", t.updatedAt()));
-            for (LeaveStore.LeaveRequest r : leave.forAccount(me))
+            for (LeaveService.LeaveRequest r : leave.forAccount(me))
                 if (r.decidedAt() != null && r.decidedAt() > weekAgo && !r.status().equals("cancelled"))
                     out.add(item("leave-decided", r.id(), "Leave " + r.status(),
                             r.from() + (r.to().equals(r.from()) ? "" : " to " + r.to()) + " · by " + r.decidedBy(), "leave", r.decidedAt()));
@@ -99,7 +99,7 @@ class NotificationController {
             Set<Long> team = new HashSet<>();
             if (!director) for (AuthService.TeamMember m : auth.team(me)) team.add(m.id());
             LongPredicate inScope = id -> id != me && (director || team.contains(id));
-            for (LeaveStore.LeaveRequest r : director ? leave.all() : leave.forTeam(me))
+            for (LeaveService.LeaveRequest r : director ? leave.all() : leave.forTeam(me))
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
                     out.add(item("leave", r.id(), "Leave request · " + r.name(),
                             r.category() + " · " + r.from() + (r.to().equals(r.from()) ? "" : " to " + r.to()), "leave", r.appliedAt()));

@@ -28,7 +28,7 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Leave, Payroll, Overtime (Jackson 2)
+    web/routes/<Module>Routes    one per area still on the old style: Payroll, Overtime (Jackson 2)
     auth/AuthController          PORTED: /auth/* login, logout, me, own password
     auth/PeopleController        PORTED: /team, /people/* (directors manage everyone, managers add employees)
     auth/AuthService             accounts, roles, reporting lines, sessions, PBKDF2 passwords, first-director
@@ -41,7 +41,8 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     notify/NotificationController  PORTED: /notifications (the bell), reads the other stores
     sync/SyncController          PORTED: /status, POST /sync, /sync/status (directors)
     sync/SyncRepository          "Sync device" queue + agent heartbeat (JdbcClient; shared tables, DDL = sdk's)
-    leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
+    leave/Leave{Controller,Service,Repository}  PORTED: /leave/* requests, approvals, company + per-person
+                                 yearly quotas (LTS); apply / approve lock the employee (quota + overlap)
     mbo/MboController            PORTED: /mbo/* (weekly MBOs, shown as "Objectives" in the UI; up to 6 per
                                  manager per week, grouped by month, expire when the week ends)
     mbo/MboService               rules + @Transactional writes; the weekly limit is held by a lock on the pair

@@ -20,14 +20,14 @@ web-dashboard/
 │       ├── web/LegacyBridgeController.java /api requests not yet on a Spring controller -> ApiServer
 │       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
-│       ├── web/routes/*Routes.java         old REST routes for the modules not ported yet (Leave, Payroll, Overtime)
+│       ├── web/routes/*Routes.java         old REST routes for the modules not ported yet (Payroll, Overtime)
 │       ├── notify/NotificationController.java  the bell: /notifications (ported)
 │       ├── auth/{Auth,People}Controller.java, AuthService.java, AuthRepository.java  accounts, roles, sessions (ported)
 │       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side (ported)
 │       ├── attendance/PunchFix{Controller,Service,Repository}.java  missed-punch requests and approved fixes (ported)
 │       ├── sync/SyncController.java        Spring controller: /status, device sync (ported)
 │       ├── sync/SyncRepository.java        "Sync device" queue + agent heartbeat
-│       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
+│       ├── leave/Leave{Controller,Service,Repository}.java  leave requests, approvals, company + personal yearly quotas (LTS, ported)
 │       ├── mbo/Mbo{Controller,Service,Repository}.java  weekly MBOs ("Objectives", 6 per manager per week): propose / acknowledge / deny / suggest, expiry (ported)
 │       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
 │       └── overtime/OvertimeStore.java     overtime claims and approvals (quarter-day tiers)
@@ -48,7 +48,7 @@ a properties file, so a value containing `\` needs it doubled).
 
 Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`), **Notifications**,
 **MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`), **Attendance**
-(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`).
+(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`), **Leave** (`/leave/*`).
 Deliberate changes on ported endpoints: a request body that isn't valid JSON
 answers **400** `request body is not valid JSON` (it was a 500 with the
 parser's message); a query parameter given twice (`?as=a&as=b`) is read as

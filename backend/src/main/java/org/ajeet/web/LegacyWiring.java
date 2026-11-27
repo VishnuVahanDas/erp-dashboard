@@ -2,10 +2,9 @@ package org.ajeet.web;
 
 import org.ajeet.attendance.AttendanceService;
 import org.ajeet.auth.AuthService;
-import org.ajeet.leave.LeaveStore;
+import org.ajeet.leave.LeaveService;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
-import org.ajeet.web.routes.LeaveRoutes;
 import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,28 +23,25 @@ import java.util.List;
 class LegacyWiring {
 
     /** The old stores, opened together so their creation order (and so their tables') stays fixed. */
-    record LegacyStores(LeaveStore leave, PayrollStore payroll, OvertimeStore overtime) {}
+    record LegacyStores(PayrollStore payroll, OvertimeStore overtime) {}
 
     /**
-     * After attendance (users / punches) and accounts (AuthService, which also seeds the first
-     * director): the old stores' tables reference accounts.
+     * After attendance (users / punches), accounts (AuthService, which also seeds the first
+     * director) and leave: the old stores' tables reference accounts, payroll reads leave.
      */
     @Bean
-    LegacyStores legacyStores(AttendanceService attendance, AuthService auth,
+    LegacyStores legacyStores(AttendanceService attendance, AuthService auth, LeaveService leave,
                               @Value("${spring.datasource.url}") String pgUrl,
                               @Value("${spring.datasource.username}") String pgUser,
                               @Value("${spring.datasource.password}") String pgPass) throws Exception {
         System.out.println("Connected to PostgreSQL: " + pgUrl);
-        // after AuthService: leave_requests references accounts
-        LeaveStore leave = new LeaveStore(pgUrl, pgUser, pgPass);
-        // after LeaveStore: payroll reads leave_requests and punches
+        // after LeaveService: payroll reads leave_requests and punches
         PayrollStore payroll = new PayrollStore(pgUrl, pgUser, pgPass);
         // after PayrollStore: overtime reads payroll_runs (and punch_fixes, created by PunchFixRepository)
         OvertimeStore overtime = new OvertimeStore(pgUrl, pgUser, pgPass);
-        return new LegacyStores(leave, payroll, overtime);
+        return new LegacyStores(payroll, overtime);
     }
 
-    @Bean LeaveStore leaveStore(LegacyStores s) { return s.leave(); }
     @Bean PayrollStore payrollStore(LegacyStores s) { return s.payroll(); }
     @Bean OvertimeStore overtimeStore(LegacyStores s) { return s.overtime(); }
 
@@ -54,7 +50,6 @@ class LegacyWiring {
     ApiServer legacyApi(LegacyStores s, AuthService auth) {
         Http http = new Http(auth);
         return new ApiServer(http, List.of(
-                new LeaveRoutes(http, s.leave(), auth),
                 new PayrollRoutes(http, s.payroll()),
                 new OvertimeRoutes(http, s.overtime())));
     }
