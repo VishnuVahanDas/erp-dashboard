@@ -16,21 +16,18 @@ web-dashboard/
 │   ├── src/main/resources/application.properties   settings (env vars, then .env)
 │   └── src/main/java/org/ajeet/
 │       ├── ErpApplication.java             Spring Boot entry point
-│       ├── web/LegacyWiring.java           opens the stores not ported yet (migration step)
-│       ├── web/LegacyBridgeController.java /api requests not yet on a Spring controller -> ApiServer
-│       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
-│       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
-│       ├── notify/NotificationController.java  the bell: /notifications (ported)
-│       ├── auth/{Auth,People}Controller.java, AuthService.java, AuthRepository.java  accounts, roles, sessions (ported)
-│       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side (ported)
-│       ├── attendance/PunchFix{Controller,Service,Repository}.java  missed-punch requests and approved fixes (ported)
-│       ├── sync/SyncController.java        Spring controller: /status, device sync (ported)
+│       ├── web/                            CORS, session parameter, role guard, errors -> {"error"}, 404
+│       ├── notify/NotificationController.java  the bell: /notifications
+│       ├── auth/{Auth,People}Controller.java, AuthService.java, AuthRepository.java  accounts, roles, sessions
+│       ├── attendance/Attendance{Controller,Service,Repository}.java  punches + device users, read side
+│       ├── attendance/PunchFix{Controller,Service,Repository}.java  missed-punch requests and approved fixes
+│       ├── sync/SyncController.java        Spring controller: /status, device sync
 │       ├── sync/SyncRepository.java        "Sync device" queue + agent heartbeat
-│       ├── leave/Leave{Controller,Service,Repository}.java  leave requests, approvals, company + personal yearly quotas (LTS, ported)
-│       ├── mbo/Mbo{Controller,Service,Repository}.java  weekly MBOs ("Objectives", 6 per manager per week): propose / acknowledge / deny / suggest, expiry (ported)
-│       ├── payroll/Payroll{Controller,Service,Repository}.java  salaries, holidays, monthly payroll runs, payslips (ported)
+│       ├── leave/Leave{Controller,Service,Repository}.java  leave requests, approvals, company + personal yearly quotas (LTS)
+│       ├── mbo/Mbo{Controller,Service,Repository}.java  weekly MBOs ("Objectives", 6 per manager per week): propose / acknowledge / deny / suggest, expiry
+│       ├── payroll/Payroll{Controller,Service,Repository}.java  salaries, holidays, monthly payroll runs, payslips
 │       ├── payroll/PayrollRules.java       the pay rules (no database; unit-tested)
-│       └── overtime/Overtime{Controller,Service,Repository}.java  overtime claims and approvals (quarter-day tiers, ported)
+│       └── overtime/Overtime{Controller,Service,Repository}.java  overtime claims and approvals (quarter-day tiers)
 ├── tools/parity/        API snapshot + diff (see Testing)
 └── frontend/            React 19 + Vite 6 (Node 22, see .nvmrc)
 ```
@@ -40,20 +37,17 @@ web-dashboard/
 Needs **Docker Desktop**, **JDK 25** and **Node 22**. Maven isn't needed — use
 the wrapper in `backend/`.
 
-The backend is being moved to **Spring Boot** step by step (branch
-`feat/spring-boot`). Spring Boot runs the server; areas not ported yet still
-answer through the original route classes, so the API is unchanged. Settings
-use the same names as before: process environment first, then `.env` (read as
-a properties file, so a value containing `\` needs it doubled).
+The backend runs on **Spring Boot** (moved from a plain JDK HTTP server on
+branch `feat/spring-boot`; the API, the JSON and the database are unchanged).
+Settings use the same names as before: process environment first, then `.env`
+(read as a properties file, so a value containing a backslash needs it doubled).
 
-Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`), **Notifications**,
-**MBO** (`/mbo/*`), **Punch fixes** (`/punch-fixes/*`), **Attendance**
-(`/attendance/*`), **Auth + People** (`/auth/*`, `/team`, `/people/*`), **Leave** (`/leave/*`), **Payroll** (`/payroll/*`), **Overtime** (`/overtime/*`):
-every area.
-Deliberate changes on ported endpoints: a request body that isn't valid JSON
-answers **400** `request body is not valid JSON` (it was a 500 with the
-parser's message); a query parameter given twice (`?as=a&as=b`) is read as
-`a,b` (it was the first value). The UI never sends either.
+Deliberate changes in the move: a request body that is not valid JSON answers
+**400** `request body is not valid JSON` (it was a 500 with the parser message);
+a query parameter given twice (`?as=a&as=b`) is read as `a,b` (it was the first
+value). The UI never sends either. Simultaneous requests are now handled in
+parallel, with database locks where a rule needs it (leave quota and overlap,
+the weekly MBO limit, the last director, payroll month changes).
 
 ```bash
 cp .env.example .env              # once

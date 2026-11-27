@@ -38,12 +38,6 @@
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
         </dependency>
-        <!-- Jackson 2: used by the route modules and stores not yet moved to Spring controllers
-             (Spring Boot 4's own JSON is Jackson 3, package tools.jackson). Goes when they're gone. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
 
         <!-- tests: the pay / leave / overtime rules, kept passing through the Spring Boot move -->
         <dependency>

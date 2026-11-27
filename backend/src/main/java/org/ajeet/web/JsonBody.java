@@ -5,7 +5,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Reads a request body the way the old {@code Http.readJson} did: any content type, an empty body
+ * Reads a request body the way the API always did: any content type, an empty body
  * is {@code {}}. Controllers take the body as {@code @RequestBody(required = false) byte[]} and
  * pass it here, then read fields with defaults ({@code path("x").asString("")}, {@code asLong(0)}).
  * Invalid JSON answers 400.
@@ -23,7 +23,7 @@ public class JsonBody {
         return raw == null || raw.length == 0 ? json.createObjectNode() : json.readTree(raw);
     }
 
-    /** A numeric body field, as Http.number: missing / null / blank = 0, a number or numeric text, else 400. */
+    /** A numeric body field: missing / null / blank = 0, a number or numeric text, else 400. */
     public static double number(JsonNode b, String field) {
         JsonNode v = b.get(field);
         if (v == null || v.isNull() || (v.isString() && v.asString().isBlank())) return 0;

@@ -9,8 +9,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * Errors from Spring controllers -> the status codes and {@code {"error": "..."}} body that
- * ApiServer always gave: bad login 401, not allowed 403, invalid input 400, anything else 500.
+ * Errors from the controllers -> the status codes and {@code {"error": "..."}} body the API always
+ * gave: bad login 401, not allowed 403, invalid input 400, anything else 500.
  * One deliberate change: a body that isn't valid JSON is 400 (it was a 500).
  */
 @RestControllerAdvice
@@ -30,7 +30,7 @@ class ApiExceptionHandler {
         return error(401, e.getMessage());
     }
 
-    @ExceptionHandler({Forbidden.class, Http.ForbiddenException.class})
+    @ExceptionHandler(Forbidden.class)
     ResponseEntity<ApiError> forbidden(Exception e) {
         return error(403, e.getMessage());
     }

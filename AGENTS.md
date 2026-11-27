@@ -17,39 +17,32 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     ErpApplication.java          Spring Boot entry point
     web/WebConfig.java           CORS + the @CurrentAccount parameter
     web/CurrentAccount           controller parameter: Bearer token -> account, else 403 "invalid or expired session"
-    web/Guard.java               role checks for controllers (Guard.requireRole), same 403 messages as before
-    web/ApiExceptionHandler      controller errors -> 401 / 403 / 400 / 500 with {"error": ...}
-    web/Forbidden.java           unchecked 403 for ported services and guards
-    web/JsonBody.java            reads a request body like the old Http.readJson (any type, empty = {})
-    web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores (after attendance + accounts), lists
-                                 the route modules in their old match order (what Main used to do)
-    web/LegacyBridgeController   MIGRATION: /api/** that no Spring controller claims -> ApiServer
-    web/ServletExchange.java     MIGRATION: a servlet request seen as a JDK HttpExchange for the old routes
-    web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
-    web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
-    web/routes/Routes.java       (empty: every area is ported; removed with the bridge next)
-    auth/AuthController          PORTED: /auth/* login, logout, me, own password
-    auth/PeopleController        PORTED: /team, /people/* (directors manage everyone, managers add employees)
+    web/Guard.java               role checks for controllers (Guard.requireRole / requireAnyRole), 403 messages
+    web/ApiExceptionHandler      errors -> 401 (AuthException) / 403 (Forbidden) / 400 (IllegalArgumentException,
+                                 bad JSON) / 500, always {"error": ...}
+    web/NotFoundController       any other /api path or method -> 404 {"error": "not found"}
+    web/Forbidden.java           unchecked 403 for services and guards
+    web/JsonBody.java            reads a request body (any content type, empty = {}); JsonBody.number for numbers
+    auth/AuthController          /auth/* login, logout, me, own password
+    auth/PeopleController        /team, /people/* (directors manage everyone, managers add employees)
     auth/AuthService             accounts, roles, reporting lines, sessions, PBKDF2 passwords, first-director
                                  seed; people changes run one at a time (last-director + device-link rules)
     auth/AuthRepository          its SQL and tables (accounts, account_roles, reporting_lines, sessions)
-    attendance/Attendance{Controller,Service,Repository}  PORTED: /attendance/* punches + device users
-                                 (read side; creates the shared users/punches tables, before the other stores)
-    attendance/PunchFix{Controller,Service,Repository}  PORTED: /punch-fixes/* missed-punch requests
-                                 (own table; never writes punches); approvedPunches feeds the attendance views
-    notify/NotificationController  PORTED: /notifications (the bell), reads the other stores
-    sync/SyncController          PORTED: /status, POST /sync, /sync/status (directors)
-    sync/SyncRepository          "Sync device" queue + agent heartbeat (JdbcClient; shared tables, DDL = sdk's)
-    leave/Leave{Controller,Service,Repository}  PORTED: /leave/* requests, approvals, company + per-person
-                                 yearly quotas (LTS); apply / approve lock the employee (quota + overlap)
-    mbo/MboController            PORTED: /mbo/* (weekly MBOs, shown as "Objectives" in the UI; up to 6 per
-                                 manager per week, grouped by month, expire when the week ends)
-    mbo/MboService               rules + @Transactional writes; the weekly limit is held by a lock on the pair
-    mbo/MboRepository            SQL (JdbcClient) and its tables' DDL / migration at startup
-    payroll/Payroll{Controller,Service,Repository}  PORTED: /payroll/* salaries, holidays, monthly runs;
-                                 run changes lock the month, salary changes the person
+    attendance/Attendance{Controller,Service,Repository}  /attendance/* punches + device users (read side;
+                                 creates the shared users/punches tables, before every other repository)
+    attendance/PunchFix{Controller,Service,Repository}  /punch-fixes/* missed-punch requests (own table; never
+                                 writes punches); approvedPunches feeds the attendance views
+    notify/NotificationController  /notifications (the bell), reads the other services
+    sync/SyncController          /status, POST /sync, /sync/status (directors)
+    sync/SyncRepository          "Sync device" queue + agent heartbeat (shared tables, DDL = sdk's)
+    leave/Leave{Controller,Service,Repository}  /leave/* requests, approvals, company + per-person yearly
+                                 quotas (LTS); apply / approve lock the employee (quota + overlap)
+    mbo/Mbo{Controller,Service,Repository}  /mbo/* weekly MBOs ("Objectives" in the UI; up to 6 per manager
+                                 per week, grouped by month, expire when the week ends); the limit locks the pair
+    payroll/Payroll{Controller,Service,Repository}  /payroll/* salaries, holidays, monthly runs; run changes
+                                 lock the month, salary changes the person
     payroll/PayrollRules         the pay rules (compute, missedMinutes, SHIFT_MIN...): no database, unit-tested
-    overtime/Overtime{Controller,Service,Repository}  PORTED: /overtime/* claims (own table); tier rule in
+    overtime/Overtime{Controller,Service,Repository}  /overtime/* claims (own table); tier rule in
                                  OvertimeService.otDays, counted from a 9:00 h span (OT_START_MIN; a full day for
                                  cuts is PayrollRules.SHIFT_MIN = 8:30 h); payroll pays approved days
   src/test/java/org/ajeet/       unit tests for the pay, leave and overtime rules
@@ -72,44 +65,43 @@ docker-compose.yml  db (postgres:17) + backend + web (nginx), project name pinne
 
 ## How the code is built (follow these patterns)
 
-- **Spring Boot migration in progress** (branch `feat/spring-boot`, baseline tag
-  `pre-spring-boot`). Spring Boot runs the server; areas not yet ported still go
-  through `LegacyBridgeController` → `ApiServer` → `web/routes/*Routes` exactly
-  as before. Each area moves to a Spring controller, which takes priority over
-  the bridge automatically. Keep `/api` paths, JSON, status codes and error
-  messages identical: the `tools/parity` diff against the `old` snapshot must stay
-  empty. Don't add features in the old style meanwhile. The two notes below on
-  routes and dependencies describe the old style until the move is finished.
-- **Porting an area** (see `mbo/`, the first full one): `<Area>Controller`
-  (`@RequestMapping("/api/...")`, `@CurrentAccount` first, `Guard` for roles,
-  body as `@RequestBody(required = false) byte[]` read with `JsonBody`, the same
-  response records), `<Area>Service` (rules, messages, `@Transactional(rollbackFor
-  = Exception.class)` on writes, throws `Forbidden` / `IllegalArgumentException`)
-  and `<Area>Repository` (the same SQL on `JdbcClient`, its DDL in the constructor;
-  `@DependsOn("legacyStores")` while it references tables an old store creates).
-  Where the old store relied on `synchronized` for a check-then-write, hold a
-  lock in the transaction (`pg_advisory_xact_lock`, `SELECT ... FOR UPDATE`).
-  JSON stored in a column (payroll_lines.days) is read with a mapper that allows
-  missing numbers (Jackson 3 refuses them by default; old rows lack newer fields).
-  Then remove the store and routes from `LegacyWiring`, delete them, and check:
-  unit tests, parity diff, and the area's writes by hand for each role.
-- **Each module owns its tables.** Every `*Store` creates its own tables with
+- **Spring Boot, one package per area:** `<area>/<Area>Controller` (HTTP),
+  `<Area>Service` (rules and messages) and `<Area>Repository` (SQL), see `mbo/`.
+  A new feature usually means a new package with those three and a new `.jsx`
+  module in the frontend.
+  - **Controller:** `@RequestMapping("/api/...")`; `@CurrentAccount
+    AuthService.Account me` first (so the session is checked before the body);
+    `Guard.requireRole` for roles; a body as `@RequestBody(required = false)
+    byte[]` read with `JsonBody`, fields read with defaults
+    (`path("x").asString("")`, `asLong(0)`, `JsonBody.number`); path ids as
+    `{id:\d+}` strings parsed with `Long.parseLong`; responses are records or
+    maps. Errors are exceptions, never hand-built responses.
+  - **Service:** the rules and their messages; throws `Forbidden` (403),
+    `IllegalArgumentException` (400) or `AuthService.AuthException` (401);
+    writes are `@Transactional(rollbackFor = Exception.class)`. Requests run in
+    parallel on a connection pool, so a check-then-write (a quota, a limit, the
+    last director) must hold a lock in its transaction: `pg_advisory_xact_lock`
+    on what it protects (see `lockAccount`, `lockPair`, `lockMonth`) or `SELECT
+    ... FOR UPDATE`; a one-per-X rule is best a unique index (catch
+    `DuplicateKeyException`). Decisions update `WHERE status = 'pending'`, so the
+    first one wins.
+  - **Repository:** SQL on `JdbcClient` (no JPA). It creates its own tables in
+    its constructor (next point); `@DependsOn` when its tables reference another
+    area's (`authRepository` for accounts).
+  - JSON stored in a column (payroll_lines.days) is read with a mapper that
+    allows missing numbers: Jackson 3 refuses them by default and older rows
+    lack newer fields.
+  - Backend changes that must not change the API (refactors, upgrades): take a
+    `tools/parity` snapshot before and after and diff them.
+- **Each module owns its tables.** Every repository creates its own tables with
   `CREATE TABLE IF NOT EXISTS` (plus any idempotent `ALTER ... IF NOT EXISTS`
-  migrations) at startup. There is no migration tool. Schema changes must be
-  additive and safe to re-run on a database that already has data.
-- **Routes live in `web/routes/<Module>Routes.java`; `ApiServer` only
-  dispatches.** Each module implements `Routes`, gets only the stores it needs
-  through its constructor and uses `Http` for JSON and guards. Role checks
-  happen in the route module before a store is called; SQL and business rules
-  stay in the `*Store` classes. `LegacyWiring` lists the modules in the order they are
-  asked, and inside a module the first matching branch wins, so put a specific
-  path (`/leave/quotas/{id}`) where it can't be shadowed. A new feature usually
-  means a new `*Store` package, a new `*Routes` class, wiring both in `LegacyWiring`,
-  and a new `.jsx` module in the frontend.
+  migrations) at startup. There is no migration tool yet. Schema changes must be
+  additive and safe to re-run on a database that already has data, and the app
+  must still start on an empty database (tables are created in dependency
+  order: attendance, then accounts, then the rest).
 - **Keep dependencies minimal.** The backend uses Spring Boot starters (webmvc,
-  jdbc, actuator), the PostgreSQL driver and, until the move is done, Jackson 2
-  for the old routes; the frontend only React. Don't add another framework or
-  library unless the user asks for one.
+  jdbc, actuator) and the PostgreSQL driver (JSON is Spring's Jackson 3); the
+  frontend only React. Add another library only when the user asks for one.
 - **Roles:** director, manager, employee (one person can hold several). A
   manager only sees people who report to them through `reporting_lines`. Every
   new endpoint must enforce this scoping on the server, not just in the UI.

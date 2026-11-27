@@ -98,7 +98,7 @@ class AttendanceController {
                 punchFixes.approvedPunches(null, day, day == null ? null : day.plusDays(1))));
     }
 
-    /** Optional ?date=YYYY-MM-DD; a malformed value answers 400 (as Http.queryDate did). */
+    /** Optional ?date=YYYY-MM-DD; a malformed value answers 400. */
     private static LocalDate date(String d) {
         if (d == null || d.isBlank()) return null;
         try {

@@ -14,8 +14,8 @@ import java.util.Map;
  * Read side of the attendance data. The Windows sync agent (sdk repo) writes
  * {@code punches} and {@code users}; both projects create the tables with
  * IF NOT EXISTS so either can start first. Shared database contract: keep the
- * DDL identical to the sdk's PunchStore. Created before the other stores
- * (LegacyWiring waits for it), as it always was.
+ * DDL identical to the sdk's PunchStore. Created before the other
+ * repositories (AuthRepository waits for it), as it always was.
  */
 @Repository
 class AttendanceRepository {
