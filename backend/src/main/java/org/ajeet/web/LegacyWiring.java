@@ -11,7 +11,6 @@ import org.ajeet.web.routes.AttendanceRoutes;
 import org.ajeet.web.routes.AuthRoutes;
 import org.ajeet.web.routes.LeaveRoutes;
 import org.ajeet.web.routes.MboRoutes;
-import org.ajeet.web.routes.NotificationRoutes;
 import org.ajeet.web.routes.OvertimeRoutes;
 import org.ajeet.web.routes.PayrollRoutes;
 import org.ajeet.web.routes.PeopleRoutes;
@@ -82,7 +81,6 @@ class LegacyWiring {
                 new PeopleRoutes(http, s.auth(), s.attendance()),
                 new LeaveRoutes(http, s.leave(), s.auth()),
                 new MboRoutes(http, s.mbo()),
-                new NotificationRoutes(http, s.auth(), s.leave(), s.mbo(), s.payroll(), s.punchFixes(), s.overtime()),
                 new PunchFixRoutes(http, s.punchFixes()),
                 new PayrollRoutes(http, s.payroll()),
                 new OvertimeRoutes(http, s.overtime())));

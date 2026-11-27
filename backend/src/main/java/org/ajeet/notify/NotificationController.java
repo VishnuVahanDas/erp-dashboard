@@ -1,27 +1,34 @@
-package org.ajeet.web.routes;
+package org.ajeet.notify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.sun.net.httpserver.HttpExchange;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import org.ajeet.attendance.PunchFixStore;
 import org.ajeet.auth.AuthStore;
 import org.ajeet.leave.LeaveStore;
 import org.ajeet.mbo.MboStore;
 import org.ajeet.overtime.OvertimeStore;
 import org.ajeet.payroll.PayrollStore;
+import org.ajeet.web.CurrentAccount;
 import org.ajeet.web.Http;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.function.LongPredicate;
 
-/** /notifications: what's waiting on you in the role you're viewing as (the bell). */
-public class NotificationRoutes implements Routes {
+/** GET /api/notifications: what's waiting on you in the role you're viewing as (the bell). */
+@RestController
+class NotificationController {
 
-    private final Http http;
-    private final ObjectMapper mapper;
     private final AuthStore auth;
     private final LeaveStore leave;
     private final MboStore mbo;
@@ -29,10 +36,8 @@ public class NotificationRoutes implements Routes {
     private final PunchFixStore punchFixes;
     private final OvertimeStore overtime;
 
-    public NotificationRoutes(Http http, AuthStore auth, LeaveStore leave, MboStore mbo,
-                              PayrollStore payroll, PunchFixStore punchFixes, OvertimeStore overtime) {
-        this.http = http;
-        this.mapper = http.mapper();
+    NotificationController(AuthStore auth, LeaveStore leave, MboStore mbo, PayrollStore payroll,
+                           PunchFixStore punchFixes, OvertimeStore overtime) {
         this.auth = auth;
         this.leave = leave;
         this.mbo = mbo;
@@ -41,19 +46,19 @@ public class NotificationRoutes implements Routes {
         this.overtime = overtime;
     }
 
-    @Override
-    public boolean handle(HttpExchange ex, String method, String path) throws Exception {
-        if (method.equals("GET") && path.equals("/notifications")) {
-            AuthStore.Account acct = http.requireAccount(ex);
-            String as = http.query(ex, "as");
-            if (as == null || as.isBlank()) as = AuthStore.EMPLOYEE;
-            if (!AuthStore.ROLES.contains(as) || !acct.has(as)) throw new Http.ForbiddenException("you don't have the " + as + " role");
-            ArrayNode items = notifications(acct, as);
-            http.send(ex, 200, mapper.createObjectNode().put("count", items.size()).set("items", items));
-        } else {
-            return false;
-        }
-        return true;
+    /** One bell item. {@code as} is set only when the item belongs to another role than the one asked. */
+    record Item(String kind, long id, String title, String detail, String tab, long at,
+                @JsonInclude(JsonInclude.Include.NON_NULL) String as) {}
+
+    record Notifications(int count, List<Item> items) {}
+
+    @GetMapping("/api/notifications")
+    Notifications notifications(@CurrentAccount AuthStore.Account acct,
+                                @RequestParam(required = false) String as) throws IOException {
+        if (as == null || as.isBlank()) as = AuthStore.EMPLOYEE;
+        if (!AuthStore.ROLES.contains(as) || !acct.has(as)) throw new Http.ForbiddenException("you don't have the " + as + " role");
+        List<Item> items = items(acct, as);
+        return new Notifications(items.size(), items);
     }
 
     /**
@@ -62,8 +67,8 @@ public class NotificationRoutes implements Routes {
      * their turn plus their own requests decided in the last 7 days. Each item
      * names the tab the dashboard should open.
      */
-    private ArrayNode notifications(AuthStore.Account acct, String as) throws IOException {
-        List<ObjectNode> out = new ArrayList<>();
+    private List<Item> items(AuthStore.Account acct, String as) throws IOException {
+        List<Item> out = new ArrayList<>();
         long me = acct.id();
         long weekAgo = System.currentTimeMillis() - 7L * 24 * 3600 * 1000;
         if (as.equals(AuthStore.EMPLOYEE)) {
@@ -91,9 +96,9 @@ public class NotificationRoutes implements Routes {
         } else {
             boolean director = as.equals(AuthStore.DIRECTOR);
             // a manager-view only covers their reportees, even for someone who is also a director
-            Set<Long> team = new java.util.HashSet<>();
+            Set<Long> team = new HashSet<>();
             if (!director) for (AuthStore.TeamMember m : auth.team(me)) team.add(m.id());
-            java.util.function.LongPredicate inScope = id -> id != me && (director || team.contains(id));
+            LongPredicate inScope = id -> id != me && (director || team.contains(id));
             for (LeaveStore.LeaveRequest r : director ? leave.all() : leave.forTeam(me))
                 if (r.status().equals("pending") && inScope.test(r.accountId()))
                     out.add(item("leave", r.id(), "Leave request · " + r.name(),
@@ -120,28 +125,26 @@ public class NotificationRoutes implements Routes {
         // your own incomplete punches, in every role: a manager asks their own reporting manager,
         // so the item opens the employee Punch history where the fix is requested
         for (PunchFixStore.MissingDay d : punchFixes.missingDays(me, acct.enrollNumber())) {
-            java.time.LocalDate day = java.time.LocalDate.parse(d.day());
+            LocalDate day = LocalDate.parse(d.day());
             String what = d.punches().size() == 1
                     ? "only one punch (" + d.punches().get(0) + ")"
                     : d.punches().size() + " punches, the last " + d.punches().get(d.punches().size() - 1);
-            out.add(item("missed-punch", Long.parseLong(d.day().replace("-", "")), "You didn't punch properly",
-                    day.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.ENGLISH))
+            // NB: the server's time zone, as before (UTC in Docker); to be fixed after the move
+            out.add(new Item("missed-punch", Long.parseLong(d.day().replace("-", "")), "You didn't punch properly",
+                    day.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH))
                             + ": " + what + " - ask your manager for a fix", "log",
-                    day.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())
-                    .put("as", AuthStore.EMPLOYEE));
+                    day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                    AuthStore.EMPLOYEE));
         }
-        out.sort((a, b) -> Long.compare(b.path("at").asLong(), a.path("at").asLong()));
-        ArrayNode arr = mapper.createArrayNode();
-        out.forEach(arr::add);
-        return arr;
+        out.sort(Comparator.comparingLong(Item::at).reversed());
+        return out;
     }
 
     private static String days(double d) {
         return (d == Math.floor(d) ? String.valueOf((long) d) : String.valueOf(d)) + " day overtime";
     }
 
-    private ObjectNode item(String kind, long id, String title, String detail, String tab, long at) {
-        return mapper.createObjectNode().put("kind", kind).put("id", id).put("title", title)
-                .put("detail", detail).put("tab", tab).put("at", at);
+    private static Item item(String kind, long id, String title, String detail, String tab, long at) {
+        return new Item(kind, id, title, detail, tab, at, null);
     }
 }
