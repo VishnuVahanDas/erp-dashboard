@@ -21,11 +21,12 @@ web-dashboard/
 │       ├── web/ApiServer.java              old dispatch: CORS, route modules, errors -> status codes
 │       ├── web/Http.java                   shared JSON / session / role helpers for the old routes
 │       ├── web/routes/*Routes.java         REST routes, one class per module (Auth, People, Attendance,
-│       │                                   PunchFix, Leave, Mbo, Payroll, Overtime, Notification, Sync)
+│       │                                   PunchFix, Leave, Mbo, Payroll, Overtime, Notification)
 │       ├── auth/AuthStore.java             accounts, roles, sessions
 │       ├── attendance/AttendanceStore.java punches + device users (read side)
 │       ├── attendance/PunchFixStore.java   missed-punch requests and approved fixes
-│       ├── sync/SyncRequests.java          "Sync device" queue + agent heartbeat
+│       ├── sync/SyncController.java        Spring controller: /status, device sync (ported)
+│       ├── sync/SyncRepository.java        "Sync device" queue + agent heartbeat
 │       ├── leave/LeaveStore.java           leave requests, approvals, company + personal yearly quotas (LTS)
 │       ├── mbo/MboStore.java               weekly MBOs ("Objectives" in the UI, 6 per manager per week): propose / acknowledge / deny / suggest, expiry
 │       ├── payroll/PayrollStore.java       salaries, holidays, monthly payroll runs, payslips
@@ -44,6 +45,10 @@ The backend is being moved to **Spring Boot** step by step (branch
 answer through the original route classes, so the API is unchanged. Settings
 use the same names as before: process environment first, then `.env` (read as
 a properties file, so a value containing `\` needs it doubled).
+
+Ported so far: **Sync** (`/status`, `/sync`, `/sync/status`). Deliberate changes
+on ported endpoints: a request body that isn't valid JSON answers **400**
+`request body is not valid JSON` (it was a 500 with the parser's message).
 
 ```bash
 cp .env.example .env              # once

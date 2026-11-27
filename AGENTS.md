@@ -15,7 +15,10 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
   src/main/resources/application.properties   settings: env vars, then ../.env or .env (same names as .env.example)
   src/main/java/org/ajeet/
     ErpApplication.java          Spring Boot entry point
-    web/WebConfig.java           CORS
+    web/WebConfig.java           CORS + the @CurrentAccount parameter
+    web/CurrentAccount           controller parameter: Bearer token -> account, else 403 "invalid or expired session"
+    web/Guard.java               role checks for controllers (Guard.requireRole), same 403 messages as before
+    web/ApiExceptionHandler      controller errors -> 401 / 403 / 400 / 500 with {"error": ...}
     web/LegacyWiring.java        MIGRATION: opens the not-yet-ported stores, seeds the director, lists
                                  the route modules in their old match order (what Main used to do)
     web/LegacyBridgeController   MIGRATION: /api/** that no Spring controller claims -> ApiServer
@@ -23,12 +26,13 @@ backend/   Java 25, Spring Boot 4.1 (webmvc, jdbc, actuator), Maven wrapper
     web/ApiServer.java           MIGRATION: CORS, dispatch to the route modules, errors -> status codes
     web/Http.java                MIGRATION: shared helpers for the old routes: JSON, session + role guards
     web/routes/Routes.java       the route-module interface: handle(ex, method, path) -> handled?
-    web/routes/<Module>Routes    one per area still on the old style: Sync, Auth, Attendance, People,
+    web/routes/<Module>Routes    one per area still on the old style: Auth, Attendance, People,
                                  Leave, Mbo, Notification, PunchFix, Payroll, Overtime (Jackson 2)
     auth/AuthStore.java          accounts, roles, reporting lines, sessions, PBKDF2 passwords
     attendance/AttendanceStore   punches + device users (read side)
     attendance/PunchFixStore     missed-punch requests (own table; never writes punches)
-    sync/SyncRequests.java       "Sync device" queue + agent heartbeat
+    sync/SyncController          PORTED: /status, POST /sync, /sync/status (directors)
+    sync/SyncRepository          "Sync device" queue + agent heartbeat (JdbcClient; shared tables, DDL = sdk's)
     leave/LeaveStore.java        leave requests, approvals, company + per-person yearly quotas (LTS)
     mbo/MboStore.java            weekly MBO threads (shown as "Objectives" in the UI; up to 6 per
                                  manager per week, grouped by month, expire when the week ends) and entries
